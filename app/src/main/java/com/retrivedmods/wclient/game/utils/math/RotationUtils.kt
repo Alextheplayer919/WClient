@@ -37,9 +37,9 @@ fun getAngleDifference(a: Float, b: Float) = ((a - b) % 360f + 540f) % 360f - 18
  *    rotation via [LocalPlayer.silentRotation], and GameSession swaps it into the outgoing
  *    PlayerAuthInputPacket. The player's camera is untouched.
  *  - Aiming is instant. A combat module never has its own rotation speed.
- *  - Orbiting (strafing) around a target never has its own speed either. The angular step each
- *    tick is derived from how fast the player is actually moving, which is whatever the motion
- *    modules (Speed, Bhop, Fly, ...) produced. Standing still means the orbit does not advance.
+ *  - Orbiting (strafing) uses a configured, steady speed rather than noisy sampled player speed.
+ *    Output steps are bounded and pause briefly after server corrections, so a noisy sample cannot
+ *    produce a position snap.
  */
 object RotationUtils {
 
@@ -136,49 +136,126 @@ object RotationUtils {
         return d
     }
 
-    /** Horizontal distance the player moved during the last tick (blocks / tick). */
-    fun horizontalSpeed(player: Entity): Float = hypot(player.motionX, player.motionZ)
-
     /**
-     * Tracks an orbit around a target where the angular velocity is tied to the player's real
-     * movement speed: each tick the player advances along the circle by exactly the distance
-     * it moved in the world (arc length = speed), so the orbit is as fast as the motion modules
-     * allow and no faster.
+     * Tracks a bounded orbit around a target at a fixed, caller-configured speed. Each emitted
+     * position is rate-limited to avoid snapping, but ordinary player-velocity fluctuations do not
+     * change the orbit rate.
      */
     class Orbit {
 
-        private var angle = 0f
+        companion object {
+            private const val DEFAULT_ORBIT_SPEED_PER_TICK = 0.15f
+            private const val MIN_ORBIT_SPEED_PER_TICK = 0.05f
+            private const val MAX_ORBIT_SPEED_PER_TICK = 0.30f
+            private const val MAX_OBSERVED_SPEED_PER_TICK = 3.0f
+            private const val MAX_CORRECTION_DISTANCE = 4.0f
+            private const val MAX_ANGLE_STEP = 0.35f
+            private const val MAX_OUTPUT_STEP = 0.30f
+            private const val MIN_OUTPUT_STEP = 0.01f
+            private const val CORRECTION_SETTLE_TICKS = 3
+        }
+
         private var targetId: Long? = null
+        private var lastPlayerPosition: Vector3f? = null
+        private var lastTick: Long? = null
+        private var settleTicks = 0
 
         fun reset() {
             targetId = null
+            lastPlayerPosition = null
+            lastTick = null
+            settleTicks = 0
         }
 
         /**
-         * Returns the next orbit position around [target] at [radius], or null if the player is not
-         * moving (so there is no movement speed to borrow).
+         * Drop the old orbit state after a server correction. Waiting a few input ticks before
+         * starting again avoids immediately replaying the same position that caused a rubber-band.
          */
-        fun next(player: Entity, target: Entity, radius: Float): Vector3f? {
-            val r = radius.coerceAtLeast(0.1f)
+        fun onServerCorrection() {
+            targetId = null
+            lastPlayerPosition = null
+            lastTick = null
+            settleTicks = CORRECTION_SETTLE_TICKS
+        }
 
+        /**
+         * Returns the next bounded orbit position around [target]. [speedPerTick] is a stable
+         * tangential speed in blocks per game tick, independent of the player's current velocity.
+         * Position discontinuities are used only to detect corrections, never to tune orbit speed.
+         */
+        fun next(
+            player: Entity,
+            target: Entity,
+            radius: Float,
+            tick: Long,
+            speedPerTick: Float = DEFAULT_ORBIT_SPEED_PER_TICK
+        ): Vector3f? {
+            val current = player.vec3Position
             if (targetId != target.runtimeEntityId) {
-                // Start the orbit from where the player currently stands relative to the target
-                // so there is no snap when a new target is acquired.
                 targetId = target.runtimeEntityId
-                angle = atan2(player.posZ - target.posZ, player.posX - target.posX)
+                lastPlayerPosition = current
+                lastTick = tick
+                if (settleTicks > 0) settleTicks--
+                return null
             }
 
-            val speed = horizontalSpeed(player)
-            if (speed < 1e-4f) return null
+            val previous = lastPlayerPosition ?: current
+            val elapsedTicks = (tick - (lastTick ?: tick - 1L)).coerceAtLeast(1L)
+            val dx = current.x - previous.x
+            val dy = current.y - previous.y
+            val dz = current.z - previous.z
+            val observedDistance = hypot(dx, dz)
+            val totalObservedDistance = hypot(observedDistance, dy)
+            val observedSpeed = observedDistance / elapsedTicks.toFloat()
+            lastPlayerPosition = current
+            lastTick = tick
 
-            angle += speed / r
-            if (angle > Math.PI.toFloat() * 2f) angle -= Math.PI.toFloat() * 2f
+            if (settleTicks > 0) {
+                settleTicks--
+                return null
+            }
 
-            return Vector3f.from(
-                target.posX + cos(angle) * r,
-                player.posY,
-                target.posZ + sin(angle) * r
-            )
+            // A large discontinuity is a teleport/correction, not useful movement input. Rebase
+            // and briefly settle rather than allowing the old orbit to fight the server correction.
+            if (!observedSpeed.isFinite() || observedSpeed > MAX_OBSERVED_SPEED_PER_TICK ||
+                totalObservedDistance > MAX_CORRECTION_DISTANCE
+            ) {
+                onServerCorrection()
+                return null
+            }
+
+            val r = radius.takeIf { it.isFinite() }?.coerceAtLeast(0.1f) ?: 2.5f
+            val relativeX = current.x - target.posX
+            val relativeZ = current.z - target.posZ
+            if (hypot(relativeX, relativeZ) < 0.1f) return null
+
+            val speed = speedPerTick.takeIf { it.isFinite() }
+                ?.coerceIn(MIN_ORBIT_SPEED_PER_TICK, MAX_ORBIT_SPEED_PER_TICK)
+                ?: DEFAULT_ORBIT_SPEED_PER_TICK
+            val travel = (speed * elapsedTicks.toFloat()).coerceAtMost(MAX_OUTPUT_STEP)
+
+            // Rebase the phase on the player's actual position every tick. This keeps the orbit
+            // aligned after target movement, small corrections, and radius changes.
+            val currentAngle = atan2(relativeZ, relativeX)
+            val nextAngle = currentAngle + (travel / r).coerceAtMost(MAX_ANGLE_STEP)
+            val desiredX = target.posX + cos(nextAngle) * r
+            val desiredZ = target.posZ + sin(nextAngle) * r
+
+            var moveX = desiredX - current.x
+            var moveZ = desiredZ - current.z
+            val requestedDistance = hypot(moveX, moveZ)
+            if (requestedDistance < 1e-4f) return null
+
+            // Keep the absolute step at the configured travel distance. If the player is
+            // off-radius or the target moved, convergence is gradual rather than a snap.
+            val maxStep = travel.coerceIn(MIN_OUTPUT_STEP, MAX_OUTPUT_STEP)
+            if (requestedDistance > maxStep) {
+                val scale = maxStep / requestedDistance
+                moveX *= scale
+                moveZ *= scale
+            }
+
+            return Vector3f.from(current.x + moveX, current.y, current.z + moveZ)
         }
     }
 }

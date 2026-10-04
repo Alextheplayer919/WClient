@@ -7,6 +7,7 @@ import com.retrivedmods.wclient.game.entity.*
 import com.retrivedmods.wclient.game.friend.FriendManager
 import com.retrivedmods.wclient.game.utils.math.RotationUtils
 import com.retrivedmods.wclient.game.utils.math.TargetPredictor
+import org.cloudburstmc.math.vector.Vector3f
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 
 class WAuraModule : Module("WAura", ModuleCategory.Combat) {
@@ -32,8 +33,34 @@ class WAuraModule : Module("WAura", ModuleCategory.Combat) {
     private var currentTarget: Entity? = null
     private val predictor = TargetPredictor()
 
+    /**
+     * Shared prediction entry point for Killaura while WAura is enabled. This lets Killaura aim
+     * at its own attack target using WAura's predictor history and the same prediction settings.
+     */
+    internal fun predictedAimPoint(observer: Entity, target: Entity, tick: Long): Vector3f? {
+        if (!rotations) return null
+        predictor.record(target, tick)
+
+        val lookahead = if (autoPrediction) {
+            session.latency.lookaheadTicks + session.hitTracker.predictionOffsetTicks
+        } else {
+            predictionTicks.toFloat()
+        }
+        val predicted = if (prediction) {
+            predictor.predict(observer, target, lookahead.coerceAtLeast(0f), tick)
+        } else {
+            target.vec3Position
+        }
+        return if (hitboxAim) RotationUtils.hitboxAimPoint(observer, target, predicted) else predicted
+    }
+
     override fun onDisabled() {
         super.onDisabled()
+        predictor.reset()
+        currentTarget = null
+    }
+
+    override fun onDisconnect(reason: String) {
         predictor.reset()
         currentTarget = null
     }
@@ -54,14 +81,10 @@ class WAuraModule : Module("WAura", ModuleCategory.Combat) {
 
             val aimTarget = currentTarget?.takeIf { it.distance(localPlayer) <= rangeValue }
                 ?: candidates.minByOrNull { it.distance(localPlayer) }
-            aimTarget?.let {
-                val lookahead = if (autoPrediction) {
-                    session.latency.lookaheadTicks + session.hitTracker.predictionOffsetTicks
-                } else predictionTicks.toFloat()
-                val predicted = if (prediction) predictor.predict(localPlayer, it, lookahead.coerceAtLeast(0f), tick)
-                else it.vec3Position
-                val aimPoint = if (hitboxAim) RotationUtils.hitboxAimPoint(localPlayer, it, predicted) else predicted
-                RotationUtils.aimSilently(localPlayer, aimPoint)
+            aimTarget?.let { target ->
+                predictedAimPoint(localPlayer, target, tick)?.let { aimPoint ->
+                    RotationUtils.aimSilently(localPlayer, aimPoint)
+                }
             }
         }
 

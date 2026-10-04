@@ -3,11 +3,13 @@ package com.retrivedmods.wclient.game.module.combat
 import com.retrivedmods.wclient.game.InterceptablePacket
 import com.retrivedmods.wclient.game.Module
 import com.retrivedmods.wclient.game.ModuleCategory
+import com.retrivedmods.wclient.game.ModuleManager
 import com.retrivedmods.wclient.game.entity.*
 import com.retrivedmods.wclient.game.friend.FriendManager
 import com.retrivedmods.wclient.game.utils.math.RotationUtils
 import com.retrivedmods.wclient.game.utils.math.TargetPredictor
 import org.cloudburstmc.math.vector.Vector3f
+import org.cloudburstmc.protocol.bedrock.packet.CorrectPlayerMovePredictionPacket
 import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 import kotlin.math.cos
@@ -36,6 +38,7 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
     private var strafe by boolValue("strafe", false)
     private val strafeRadius by floatValue("strafe_radius", 2.5f, 1f..6f)
+    private var strafeSpeed by floatValue("strafe_speed", 0.15f, 0.05f..0.30f)
 
 
 
@@ -76,36 +79,70 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
         predictor.reset()
     }
 
+    override fun onDisconnect(reason: String) {
+        orbit.reset()
+        predictor.reset()
+    }
+
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled) return
         val packet = interceptablePacket.packet
+
+        // Server teleports and Bedrock movement-prediction corrections invalidate the orbit's
+        // previous phase and speed estimate. Do not immediately replay movement after a correction.
+        if (packet is CorrectPlayerMovePredictionPacket ||
+            (packet is MovePlayerPacket &&
+                packet.runtimeEntityId == session.localPlayer.runtimeEntityId &&
+                (packet.mode == MovePlayerPacket.Mode.TELEPORT || packet.mode == MovePlayerPacket.Mode.RESPAWN))
+        ) {
+            orbit.onServerCorrection()
+            return
+        }
+
         if (packet !is PlayerAuthInputPacket) return
 
         val targets = searchForTargets()
             .filterNot { it is Player && FriendManager.isFriend(it.uuid) }
         if (targets.isEmpty()) {
             orbit.reset()
+            predictor.reset()
             return
         }
 
-        // Rotations and strafing run every tick, independently of the attack CPS, so the server
-        // always sees us facing the primary target and the orbit follows real movement speed.
+        // Rotations and strafing run every tick, independently of attack CPS. Orbit speed is a
+        // configured constant, so knockback and changing air-control velocity do not change pace.
         val player = session.localPlayer
         val primary = targets.first()
         val tick = packet.tick
         targets.forEach { predictor.record(it, tick) }
 
         if (rotations) {
-            val lookahead = if (autoPrediction) {
-                session.latency.lookaheadTicks + session.hitTracker.predictionOffsetTicks
-            } else predictionTicks.toFloat()
-            val predicted = if (prediction) predictor.predict(player, primary, lookahead.coerceAtLeast(0f), tick)
-            else primary.vec3Position
-            val aimPoint = if (hitboxAim) RotationUtils.hitboxAimPoint(player, primary, predicted) else predicted
+            // If WAura is active, use its predictor history and settings for Killaura's actual
+            // attack target. Killaura remains independently usable with its own settings otherwise.
+            val activeWAura = ModuleManager.modules
+                .firstOrNull { it is WAuraModule && it.isEnabled } as? WAuraModule
+            val sharedAimPoint = activeWAura?.predictedAimPoint(player, primary, tick)
+            val aimPoint = sharedAimPoint ?: run {
+                val lookahead = if (autoPrediction) {
+                    session.latency.lookaheadTicks + session.hitTracker.predictionOffsetTicks
+                } else {
+                    predictionTicks.toFloat()
+                }
+                val predicted = if (prediction) {
+                    predictor.predict(player, primary, lookahead.coerceAtLeast(0f), tick)
+                } else {
+                    primary.vec3Position
+                }
+                if (hitboxAim) RotationUtils.hitboxAimPoint(player, primary, predicted) else predicted
+            }
             // Silent: only the server-bound rotation changes, the camera is never moved.
             RotationUtils.aimSilently(player, aimPoint)
         }
-        if (strafe) strafeAroundTarget(primary)
+        if (strafe) {
+            strafeAroundTarget(primary, tick)
+        } else {
+            orbit.reset()
+        }
 
         val now = System.currentTimeMillis()
         val delay = 1000L / cpsValue
@@ -189,12 +226,12 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
 
     /**
-     * Orbits the target using the player's actual movement speed (whatever the motion modules
-     * produce) - there is no strafe speed of its own. Standing still means no orbit.
+     * Orbits at a configured constant speed. Positions are still bounded per packet and re-anchored
+     * to the current target, avoiding a snap when the target or configured radius changes.
      */
-    private fun strafeAroundTarget(entity: Entity) {
+    private fun strafeAroundTarget(entity: Entity, tick: Long) {
         val player = session.localPlayer
-        val next = orbit.next(player, entity, strafeRadius) ?: return
+        val next = orbit.next(player, entity, strafeRadius, tick, strafeSpeed) ?: return
 
         session.clientBound(
             MovePlayerPacket().apply {
@@ -202,7 +239,8 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
                 position = next
                 rotation = player.vec3Rotation
                 mode = MovePlayerPacket.Mode.NORMAL
-                onGround = true
+                // Killaura strafing is primarily used airborne; do not claim ground contact.
+                onGround = false
                 tick = player.tickExists
             }
         )
