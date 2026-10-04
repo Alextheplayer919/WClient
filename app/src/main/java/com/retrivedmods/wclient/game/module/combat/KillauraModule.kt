@@ -241,7 +241,8 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
                 mode = MovePlayerPacket.Mode.NORMAL
                 // Killaura strafing is primarily used airborne; do not claim ground contact.
                 onGround = false
-                tick = player.tickExists
+                // Qualify: the function parameter `tick` would otherwise hide this packet field.
+                this.tick = player.tickExists
             }
         )
     }
