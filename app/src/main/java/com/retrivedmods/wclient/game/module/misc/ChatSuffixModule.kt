@@ -6,27 +6,44 @@ import com.retrivedmods.wclient.game.ModuleCategory
 import com.retrivedmods.wclient.game.utils.ChatFormat
 import org.cloudburstmc.protocol.bedrock.packet.TextPacket
 
-/** Despite the name, the custom text goes at the START, as requested. */
+/** Appends a configurable tag plus random junk tail to every outgoing chat message. */
 class ChatSuffixModule : Module("Chat Suffix", ModuleCategory.Misc) {
-    private val text by stringValue("Text", "E", emptyList())
+
+    private val chatSuffix by stringValue("Chat Suffix", "E", emptyList())
     private val greenChat by boolValue("Green Chat", false)
     private val randomString by boolValue("Random String", true)
 
-    override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
-        if (!isEnabled || interceptablePacket.serverBound != true) return
-        val packet = interceptablePacket.packet as? TextPacket ?: return
-        if (packet.type != TextPacket.Type.CHAT) return
-        // Do not rewrite server commands or the client's dot commands.
-        val message = packet.message.toString()
-        if (message.trimStart().let { it.startsWith("/") || it.startsWith(".") }) return
-        val formatted = ChatFormat.format(message, text, greenChat, randomString)
-        if (formatted == message) return
+    private fun buildTextPacket(message: String): TextPacket = TextPacket().apply {
+        type = TextPacket.Type.CHAT
+        isNeedsTranslation = false
+        sourceName = "__ox_internal__"
+        xuid = ""
+        platformChatId = ""
+        this.message = message
+        filteredMessage = ""
+    }
 
-        // The relay forwards untouched packet bytes. Drop the original and send
-        // the modified TextPacket so the prefix actually reaches the server.
-        packet.message = formatted
+    override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
+        if (!isEnabled) return
+        if (interceptablePacket.serverBound != true) return
+        val p = interceptablePacket.packet as? TextPacket ?: return
+        if (p.type != TextPacket.Type.CHAT) return
+        // Ignore our own re-injected packets so we don't loop.
+        if (p.sourceName == "__ox_internal__") return
+
+        val raw = p.message?.trim() ?: return
+        if (raw.isEmpty() || raw.startsWith("/") || raw.startsWith(".")) return
+
+        val suffix = chatSuffix.ifEmpty { "E" }
+        val body = if (greenChat) raw.removePrefix("> ").removePrefix(">") else raw
+        val base = (if (greenChat) "> " else "") + body
+        val formatted = if (randomString) "$base | $suffix | ${ChatFormat.randomString()}" else "$base | $suffix"
+
+        // Cancel the original packet and re-send a fresh one so the relay forwards the
+        // modified bytes instead of the untouched originals.
         interceptablePacket.intercept()
-        session.serverBound(packet)
-        session.afterPacketBound(packet)
+        val replacement = buildTextPacket(formatted)
+        session.serverBound(replacement)
+        session.afterPacketBound(replacement)
     }
 }

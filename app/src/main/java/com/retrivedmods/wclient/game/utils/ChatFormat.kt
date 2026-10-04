@@ -4,10 +4,13 @@ import kotlin.random.Random
 
 /** Shared formatting for ordinary chat and module-generated announcements. */
 object ChatFormat {
-    private const val CHARACTERS = "abcdefghijklmnopqrstuvwxyz0123456789"
+    private const val CHARACTERS = "abcdefghjklmnopqrstuvwxyz0123456789"
+    private val RANDOM_RANGE = 12..22
 
     fun randomString(): String = buildString {
-        repeat(Random.nextInt(12, 23)) { append(CHARACTERS[Random.nextInt(CHARACTERS.length)]) }
+        repeat(Random.nextInt(RANDOM_RANGE.first, RANDOM_RANGE.last + 1)) {
+            append(CHARACTERS[Random.nextInt(CHARACTERS.length)])
+        }
     }
 
     fun format(message: String, prefix: String = "", green: Boolean = false, random: Boolean = true): String {

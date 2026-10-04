@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.core.animateFloatAsState
@@ -68,6 +69,10 @@ private val ButtonBackground = Color(0xFF251A1A)
 
 class OverlayClickGUI : OverlayWindow() {
 
+    // The ClickGUI hosts text fields (e.g. Chat Suffix). Make it focusable so
+    // the soft keyboard can pop up when the user taps an input.
+    override val focusable: Boolean = true
+
     private val _layoutParams by lazy {
         super.layoutParams.apply {
             flags = flags or WindowManager.LayoutParams.FLAG_DIM_BEHIND
@@ -91,6 +96,12 @@ class OverlayClickGUI : OverlayWindow() {
         val context = LocalContext.current
         val snackbarHostState = remember { SnackbarHostState() }
 
+        // Since the ClickGUI is now focusable to allow keyboard input, the
+        // Activity behind us no longer sees the back key. Handle it here so
+        // pressing back dismisses the GUI (and hides the keyboard) instead
+        // of doing nothing.
+        BackHandler { OverlayManager.dismissOverlayWindow(this@OverlayClickGUI) }
+
         Box(
             Modifier
                 .fillMaxSize()
@@ -99,7 +110,7 @@ class OverlayClickGUI : OverlayWindow() {
                     indication = null,
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
                 ) {
-                    OverlayManager.dismissOverlayWindow(this)
+                    OverlayManager.dismissOverlayWindow(this@OverlayClickGUI)
                 },
             contentAlignment = Alignment.Center
         ) {

@@ -20,7 +20,8 @@ class ChatFormatTest {
     @Test fun randomTailIsAlphanumeric() {
         repeat(100) {
             val result = ChatFormat.format("hello")
-            assertTrue(result.matches(Regex("hello \\| [a-z0-9]{12,22}")))
+            // Note: 'i' is intentionally excluded from the junk character set.
+            assertTrue(result.matches(Regex("hello \\| [a-hj-z0-9]{12,22}")))
         }
     }
 }
