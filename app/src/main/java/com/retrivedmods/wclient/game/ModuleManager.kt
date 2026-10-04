@@ -33,6 +33,8 @@ import com.retrivedmods.wclient.game.module.misc.PieChartModule
 import com.retrivedmods.wclient.game.module.misc.PositionLoggerModule
 import com.retrivedmods.wclient.game.module.misc.ReplayModule
 import com.retrivedmods.wclient.game.module.misc.ChestStealerModule
+import com.retrivedmods.wclient.game.module.misc.PopCounterModule
+import com.retrivedmods.wclient.game.module.misc.ChatSuffixModule
 import com.retrivedmods.wclient.game.module.misc.SpammerModule
 import com.retrivedmods.wclient.game.module.misc.ToggleSoundModule
 import com.retrivedmods.wclient.game.module.misc.WaterMarkModule
@@ -152,6 +154,8 @@ object ModuleManager {
             add(ChestStealerModule())
             add(DesyncModule())
             add(SpammerModule())
+            add(PopCounterModule())
+            add(ChatSuffixModule())
             add(WaterMarkModule())
             add(PositionLoggerModule())
             add(NoChatModule())
