@@ -15,7 +15,9 @@ class WAuraModule : Module("WAura", ModuleCategory.Combat) {
     private var mobsOnly by boolValue("mobs_only", false)
     private var rotations by boolValue("rotations", true)
     private var prediction by boolValue("prediction", true)
+    private var autoPrediction by boolValue("auto_prediction", true)
     private var predictionTicks by intValue("prediction_ticks", 2, 0..10)
+    private var hitboxAim by boolValue("hitbox_aim", true)
 
     private var rangeValue by floatValue("range", 50f, 2f..50f)
     private var cpsValue by intValue("cps", 25, 1..50)
@@ -47,13 +49,18 @@ class WAuraModule : Module("WAura", ModuleCategory.Combat) {
             val localPlayer = session.localPlayer
             val candidates = session.level.entityMap.values
                 .filter { it.isTarget() && it.distance(localPlayer) <= rangeValue }
-            candidates.forEach { predictor.record(it) }
+            val tick = packet.tick
+            candidates.forEach { predictor.record(it, tick) }
 
             val aimTarget = currentTarget?.takeIf { it.distance(localPlayer) <= rangeValue }
                 ?: candidates.minByOrNull { it.distance(localPlayer) }
             aimTarget?.let {
-                val aimPoint = if (prediction) predictor.predict(localPlayer, it, predictionTicks.toFloat())
+                val lookahead = if (autoPrediction) {
+                    session.latency.lookaheadTicks + session.hitTracker.predictionOffsetTicks
+                } else predictionTicks.toFloat()
+                val predicted = if (prediction) predictor.predict(localPlayer, it, lookahead.coerceAtLeast(0f), tick)
                 else it.vec3Position
+                val aimPoint = if (hitboxAim) RotationUtils.hitboxAimPoint(localPlayer, it, predicted) else predicted
                 RotationUtils.aimSilently(localPlayer, aimPoint)
             }
         }

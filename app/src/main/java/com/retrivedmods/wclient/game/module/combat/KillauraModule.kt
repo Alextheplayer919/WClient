@@ -23,7 +23,9 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     private var antiBot by boolValue("anti_bot", true)
     private var rotations by boolValue("rotations", true)
     private var prediction by boolValue("prediction", true)
+    private var autoPrediction by boolValue("auto_prediction", true)
     private var predictionTicks by intValue("prediction_ticks", 2, 0..10)
+    private var hitboxAim by boolValue("hitbox_aim", true)
 
     private var tpAuraEnabled by boolValue("tp_aura", false)
     private var teleportBehind by boolValue("tp_behind", false)
@@ -90,11 +92,16 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
         // always sees us facing the primary target and the orbit follows real movement speed.
         val player = session.localPlayer
         val primary = targets.first()
-        targets.forEach { predictor.record(it) }
+        val tick = packet.tick
+        targets.forEach { predictor.record(it, tick) }
 
         if (rotations) {
-            val aimPoint = if (prediction) predictor.predict(player, primary, predictionTicks.toFloat())
+            val lookahead = if (autoPrediction) {
+                session.latency.lookaheadTicks + session.hitTracker.predictionOffsetTicks
+            } else predictionTicks.toFloat()
+            val predicted = if (prediction) predictor.predict(player, primary, lookahead.coerceAtLeast(0f), tick)
             else primary.vec3Position
+            val aimPoint = if (hitboxAim) RotationUtils.hitboxAimPoint(player, primary, predicted) else predicted
             // Silent: only the server-bound rotation changes, the camera is never moved.
             RotationUtils.aimSilently(player, aimPoint)
         }

@@ -135,6 +135,7 @@ class LocalPlayer(val session: GameSession) : Player(0L, 0L, UUID.randomUUID(), 
         inventoryTransactionPacket.clickPosition = Vector3f.ZERO
 
         session.serverBound(inventoryTransactionPacket)
+        session.hitTracker.onAttack(entity.runtimeEntityId)
     }
 
     override fun onDisconnect() {

@@ -7,6 +7,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sign
 import kotlin.math.sin
@@ -16,48 +17,59 @@ import kotlin.math.sin
  * (which sees the target slightly in the past and whose hits reach the server slightly in the
  * future) still line up during fast fights.
  *
- * How positions reach us (per packet):
- *  - Other players: `MovePlayerPacket` (absolute position + rotation) roughly every server tick.
- *  - Mobs / other entities: `MoveEntityAbsolutePacket` or `MoveEntityDeltaPacket`.
- * `Entity.move()` already turns those into `posX/Y/Z` + `motionX/Y/Z`, so we sample the entity's
- * position whenever it changes and keep a short history per target.
+ * Position sources: other players arrive via `MovePlayerPacket`, mobs via `MoveEntityAbsolute` /
+ * `MoveEntityDeltaPacket`; both end in `Entity.move()`. Samples are stamped with the *client tick*
+ * (PlayerAuthInputPacket.tick) instead of wall-clock time so RakNet batching (two move packets in
+ * one datagram) does not look like a teleport followed by a stall.
  *
- * From the history we derive, in the local player's polar frame (angle / radius around us):
- *  - linear velocity                         -> where a target running in a straight line goes
- *  - angular velocity (strafe left / right)  -> where a target circling us goes
- *  - radial velocity                         -> closing in / backing off
- *  - sign flips of the angular velocity      -> the target is juking, so trust the guess less
+ * Models, in the local player's polar frame (angle / radius around us):
+ *  - LINEAR   : constant velocity with Bedrock air drag (0.91 / tick) - straight runners.
+ *  - CIRCULAR : constant angular + radial velocity - targets strafing around us.
+ * Both are back-tested every tick: each predicts the newest sample from the older ones and the
+ * one with the lower running error is used, so the choice is self-correcting.
  *
- * If the target's motion is dominated by movement *around* us (typical strafing / W-tapping
- * fights) we extrapolate along the arc; otherwise we extrapolate along the straight line.
+ * Intent signals:
+ *  - Head yaw: a player's head turns 2-4 ticks before their velocity follows. If head yaw is
+ *    swinging against the current strafe direction, a reversal is coming and the prediction is
+ *    damped toward the current position.
+ *  - Angular sign flips (position based) damp the prediction for a short memory window.
+ *
+ * Vertical: Bedrock jumps are deterministic (v0 = 0.42, g = 0.08, drag 0.98). An airborne target
+ * is integrated along that parabola instead of being linearly extrapolated.
  */
 class TargetPredictor {
 
-    private class Sample(val time: Long, val x: Float, val y: Float, val z: Float)
+    private class Sample(val tick: Long, val x: Float, val y: Float, val z: Float, val headYaw: Float)
 
     private class History {
         val samples = ArrayDeque<Sample>()
         var lastAngularSign = 0f
-        var lastFlipTime = 0L
+        var lastFlipTick = Long.MIN_VALUE
+        var linearError = 0.2f
+        var circularError = 0.2f
+        var airborneTicks = 0
     }
 
     private val histories = HashMap<Long, History>()
 
     companion object {
-        private const val MAX_SAMPLES = 10
-        private const val SAMPLE_TTL_MS = 1500L
+        private const val MAX_SAMPLES = 12
+        private const val SAMPLE_TTL_TICKS = 30L
         private const val MIN_SAMPLES = 3
 
-        /** Nothing in vanilla Bedrock sustains more than ~1 block / tick without flying. */
         private const val MAX_SPEED_PER_TICK = 1.0f
-
-        /** How long a recent strafe-direction change keeps the prediction damped. */
-        private const val FLIP_MEMORY_MS = 350L
-
-        /** Prediction weight while damped by a recent direction change. */
+        private const val FLIP_MEMORY_TICKS = 7L
         private const val FLIP_DAMPING = 0.35f
+        private const val HEAD_INTENT_DAMPING = 0.5f
+        private const val HEAD_INTENT_THRESHOLD_DEG = 25f
 
-        private const val TICK_MS = 50f
+        // Bedrock player physics
+        private const val AIR_DRAG = 0.91f
+        private const val JUMP_VELOCITY = 0.42f
+        private const val GRAVITY = 0.08f
+        private const val VERTICAL_DRAG = 0.98f
+
+        private const val ERROR_EMA = 0.3f
     }
 
     fun reset() = histories.clear()
@@ -66,26 +78,35 @@ class TargetPredictor {
         histories.remove(entity.runtimeEntityId)
     }
 
-    /** Record the target's current position. Call this every tick for every candidate target. */
-    fun record(target: Entity, now: Long = System.currentTimeMillis()) {
+    /** Record the target's current position at client [tick]. Call every tick for every candidate. */
+    fun record(target: Entity, tick: Long) {
         val history = histories.getOrPut(target.runtimeEntityId) { History() }
         val last = history.samples.lastOrNull()
 
-        // Only store a sample when the server actually moved the entity.
         if (last != null && last.x == target.posX && last.y == target.posY && last.z == target.posZ) return
+        if (last != null && tick <= last.tick) return
 
-        history.samples.addLast(Sample(now, target.posX, target.posY, target.posZ))
+        val sample = Sample(tick, target.posX, target.posY, target.posZ, target.rotationYawHead)
+        history.samples.addLast(sample)
         while (history.samples.size > MAX_SAMPLES) history.samples.removeFirst()
-        while (history.samples.isNotEmpty() && now - history.samples.first().time > SAMPLE_TTL_MS) {
+        while (history.samples.isNotEmpty() && tick - history.samples.first().tick > SAMPLE_TTL_TICKS) {
             history.samples.removeFirst()
         }
+
+        if (history.samples.size >= 2) {
+            val prev = history.samples[history.samples.size - 2]
+            val vy = (sample.y - prev.y) / max(1L, sample.tick - prev.tick)
+            history.airborneTicks = if (abs(vy) > 0.02f) history.airborneTicks + 1 else 0
+        }
+
+        if (history.samples.size >= MIN_SAMPLES + 1) backTest(history)
     }
 
     /**
-     * Predicted position of [target] after [lookaheadTicks] ticks, as seen from [observer].
-     * Falls back to the target's current position when there is not enough data.
+     * Predicted position of [target] after [lookaheadTicks] ticks as seen from [observer].
+     * Falls back to the current position when there is not enough data.
      */
-    fun predict(observer: Entity, target: Entity, lookaheadTicks: Float, now: Long = System.currentTimeMillis()): Vector3f {
+    fun predict(observer: Entity, target: Entity, lookaheadTicks: Float, nowTick: Long): Vector3f {
         val current = target.vec3Position
         if (lookaheadTicks <= 0f) return current
 
@@ -95,63 +116,41 @@ class TargetPredictor {
 
         val newest = samples.last()
         val oldest = samples.first()
-        val dtTicks = (newest.time - oldest.time) / TICK_MS
-        if (dtTicks < 1f) return current
+        val dt = (newest.tick - oldest.tick).toFloat()
+        if (dt < 1f) return current
 
-        // --- Linear model -------------------------------------------------------------------
-        var vx = (newest.x - oldest.x) / dtTicks
-        var vy = (newest.y - oldest.y) / dtTicks
-        var vz = (newest.z - oldest.z) / dtTicks
-
-        val speed = hypot(vx, vz)
-        if (speed > MAX_SPEED_PER_TICK) {           // teleport / lag spike: do not extrapolate it
-            val k = MAX_SPEED_PER_TICK / speed
-            vx *= k; vz *= k
-        }
-
-        // --- Polar model around the observer --------------------------------------------------
         val ox = observer.posX
         val oz = observer.posZ
 
-        val angleNew = atan2(newest.z - oz, newest.x - ox)
-        val angleOld = atan2(oldest.z - oz, oldest.x - ox)
-        val radiusNew = hypot(newest.x - ox, newest.z - oz)
-        val radiusOld = hypot(oldest.x - ox, oldest.z - oz)
-
-        val angularVelocity = wrapAngle(angleNew - angleOld) / dtTicks   // rad / tick, + = counter-clockwise
-        val radialVelocity = (radiusNew - radiusOld) / dtTicks           // blocks / tick, + = moving away
-
-        // --- Direction-change detection (left <-> right strafe switches) --------------------------
-        val recentAngularSign = recentAngularSign(samples, ox, oz)
-        if (recentAngularSign != 0f && history.lastAngularSign != 0f && recentAngularSign != history.lastAngularSign) {
-            history.lastFlipTime = now
-        }
-        if (recentAngularSign != 0f) history.lastAngularSign = recentAngularSign
-
+        // ---- confidence --------------------------------------------------------------------
         var weight = 1f
-        if (now - history.lastFlipTime < FLIP_MEMORY_MS) weight = FLIP_DAMPING
 
-        // --- Pick the model ----------------------------------------------------------------------
-        val tangentialSpeed = abs(angularVelocity) * radiusNew
-        val circular = radiusNew > 0.5f && tangentialSpeed > abs(radialVelocity) * 1.5f && tangentialSpeed > 0.03f
+        val recentSign = recentAngularSign(samples, ox, oz)
+        if (recentSign != 0f && history.lastAngularSign != 0f && recentSign != history.lastAngularSign) {
+            history.lastFlipTick = nowTick
+        }
+        if (recentSign != 0f) history.lastAngularSign = recentSign
+        if (nowTick - history.lastFlipTick < FLIP_MEMORY_TICKS) weight = min(weight, FLIP_DAMPING)
+
+        // Head-yaw intent: head swinging against current strafe direction => reversal incoming.
+        val headDelta = getAngleDifference(newest.headYaw, samples[samples.size - 2].headYaw)
+        if (recentSign != 0f && abs(headDelta) > HEAD_INTENT_THRESHOLD_DEG) {
+            // Positive angular sign = counter-clockwise around us as seen from above. For a target
+            // strafing left around us the head turns the opposite way to keep facing us, so a head
+            // swing with the *same* sign as the angular motion means they are turning away/reversing.
+            if (sign(headDelta) == recentSign) weight = min(weight, HEAD_INTENT_DAMPING)
+        }
 
         val t = lookaheadTicks * weight
 
-        val px: Float
-        val pz: Float
-        if (circular) {
-            val angle = angleNew + angularVelocity * t
-            val radius = (radiusNew + radialVelocity * t).coerceAtLeast(0.1f)
-            px = ox + cos(angle) * radius
-            pz = oz + sin(angle) * radius
-        } else {
-            px = newest.x + vx * t
-            pz = newest.z + vz * t
-        }
-        // Vertical motion is dominated by gravity/jumps which are poorly modelled linearly; keep it conservative.
-        val py = newest.y + vy * min(t, 2f)
+        // ---- horizontal ---------------------------------------------------------------------
+        val useCircular = history.circularError < history.linearError
+        val (px, pz) = if (useCircular) predictCircular(samples, ox, oz, t) else predictLinear(samples, t)
 
-        // Never predict further than the target could physically travel.
+        // ---- vertical -----------------------------------------------------------------------
+        val py = predictVertical(samples, history, t)
+
+        // ---- physical clamp -----------------------------------------------------------------
         val maxTravel = MAX_SPEED_PER_TICK * lookaheadTicks
         val dx = px - current.x
         val dz = pz - current.z
@@ -163,8 +162,101 @@ class TargetPredictor {
         return Vector3f.from(px, py, pz)
     }
 
-    /** Sign of the angular velocity over the last two intervals only (fast reaction to strafe switches). */
-    private fun recentAngularSign(samples: ArrayDeque<Sample>, ox: Float, oz: Float): Float {
+    // ---- models ---------------------------------------------------------------------------------
+
+    private fun velocity(samples: List<Sample>): Pair<Float, Float> {
+        // Weighted toward the most recent interval so W-tap starts/stops show up quickly.
+        val n = samples.size
+        val a = samples[n - 1]
+        val b = samples[n - 2]
+        val c = samples[0]
+        val dtRecent = max(1L, a.tick - b.tick).toFloat()
+        val dtAll = max(1L, a.tick - c.tick).toFloat()
+        var vx = 0.6f * (a.x - b.x) / dtRecent + 0.4f * (a.x - c.x) / dtAll
+        var vz = 0.6f * (a.z - b.z) / dtRecent + 0.4f * (a.z - c.z) / dtAll
+        val speed = hypot(vx, vz)
+        if (speed > MAX_SPEED_PER_TICK) {   // teleport / lag spike: do not extrapolate it
+            val k = MAX_SPEED_PER_TICK / speed
+            vx *= k; vz *= k
+        }
+        return vx to vz
+    }
+
+    /** Constant velocity with per-tick air drag: sum of a geometric series. */
+    private fun predictLinear(samples: List<Sample>, t: Float): Pair<Float, Float> {
+        val (vx, vz) = velocity(samples)
+        val newest = samples.last()
+        val dragSum = if (t <= 0f) 0f else (1f - Math.pow(AIR_DRAG.toDouble(), t.toDouble()).toFloat()) / (1f - AIR_DRAG)
+        // Blend drag model (air) with pure-linear (ground, where friction and input cancel out).
+        val travel = 0.5f * t + 0.5f * dragSum
+        return (newest.x + vx * travel) to (newest.z + vz * travel)
+    }
+
+    private fun predictCircular(samples: List<Sample>, ox: Float, oz: Float, t: Float): Pair<Float, Float> {
+        val n = samples.size
+        val a = samples[n - 1]
+        val b = samples[max(0, n - 4)]
+        val dt = max(1L, a.tick - b.tick).toFloat()
+
+        val angleA = atan2(a.z - oz, a.x - ox)
+        val angleB = atan2(b.z - oz, b.x - ox)
+        val radiusA = hypot(a.x - ox, a.z - oz)
+        val radiusB = hypot(b.x - ox, b.z - oz)
+
+        val angularVelocity = wrapAngle(angleA - angleB) / dt
+        val radialVelocity = (radiusA - radiusB) / dt
+
+        val angle = angleA + angularVelocity * t
+        val radius = (radiusA + radialVelocity * t).coerceAtLeast(0.1f)
+        return (ox + cos(angle) * radius) to (oz + sin(angle) * radius)
+    }
+
+    private fun predictVertical(samples: List<Sample>, history: History, t: Float): Float {
+        val n = samples.size
+        val a = samples[n - 1]
+        val b = samples[n - 2]
+        var vy = (a.y - b.y) / max(1L, a.tick - b.tick).toFloat()
+
+        if (history.airborneTicks == 0 || abs(vy) < 0.02f) return a.y
+
+        // First airborne sample moving up at ~jump speed => a jump; integrate the known parabola.
+        if (history.airborneTicks == 1 && vy > 0.3f) vy = JUMP_VELOCITY
+
+        var y = a.y
+        var v = vy
+        var remaining = t
+        while (remaining > 0f) {
+            val step = min(1f, remaining)
+            v = (v - GRAVITY * step) * VERTICAL_DRAG
+            y += v * step
+            remaining -= step
+        }
+        return y
+    }
+
+    /** Each model predicts the newest sample from the older ones; running errors pick the winner. */
+    private fun backTest(history: History) {
+        val samples = history.samples
+        val newest = samples.last()
+        val older = samples.subList(0, samples.size - 1)
+        val dt = (newest.tick - older.last().tick).toFloat()
+        if (dt < 1f || dt > 5f) return
+
+        // Observer position at back-test time is unknown; use the target's own frame midpoint as
+        // a stable proxy (circular-ness is about curvature, which is frame-independent enough).
+        val ox = older.first().x
+        val oz = older.first().z
+
+        val (lx, lz) = predictLinear(older, dt)
+        val (cx, cz) = if (older.size >= 3) predictCircular(older, ox, oz, dt) else (lx to lz)
+
+        val linErr = hypot(lx - newest.x, lz - newest.z)
+        val cirErr = hypot(cx - newest.x, cz - newest.z)
+        history.linearError = (1f - ERROR_EMA) * history.linearError + ERROR_EMA * linErr
+        history.circularError = (1f - ERROR_EMA) * history.circularError + ERROR_EMA * cirErr
+    }
+
+    private fun recentAngularSign(samples: List<Sample>, ox: Float, oz: Float): Float {
         if (samples.size < 3) return 0f
         val a = samples[samples.size - 3]
         val b = samples[samples.size - 1]

@@ -8,6 +8,8 @@ import com.retrivedmods.wclient.game.registry.BlockMappingProvider
 import com.retrivedmods.wclient.game.registry.ItemMapping
 import com.retrivedmods.wclient.game.registry.ItemMappingProvider
 import com.retrivedmods.wclient.game.world.Level
+import com.retrivedmods.wclient.game.utils.combat.HitTracker
+import com.retrivedmods.wclient.game.utils.combat.LatencyTracker
 import com.retrivedmods.wrelay.WRelaySession
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket
@@ -23,6 +25,12 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
 
     val localPlayer = LocalPlayer(this)
     val level = Level(this)
+
+    /** Relay <-> server RTT estimate used to size aim prediction. */
+    val latency = LatencyTracker(this)
+
+    /** Attack -> HURT feedback loop that auto-tunes the prediction offset. */
+    val hitTracker = HitTracker(latency)
 
     val protocolVersion: Int
         get() = wRelaySession.server.codec.protocolVersion
@@ -95,6 +103,10 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
         localPlayer.onPacketBound(packet)
         level.onPacketBound(packet)
 
+        if (latency.onPacket(packet)) return true
+        hitTracker.onPacket(packet)
+        if (packet is PlayerAuthInputPacket) latency.tick()
+
         val interceptablePacket = InterceptablePacket(packet)
 
         for (module in ModuleManager.modules) {
@@ -151,6 +163,8 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
     override fun onDisconnect(reason: String) {
         localPlayer.onDisconnect()
         level.onDisconnect()
+        latency.reset()
+        hitTracker.reset()
         startGameReceived = false
 
         for (module in ModuleManager.modules) {

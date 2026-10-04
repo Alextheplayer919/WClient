@@ -3,6 +3,8 @@ package com.retrivedmods.wclient.game.utils.math
 import com.retrivedmods.wclient.game.entity.Entity
 import com.retrivedmods.wclient.game.entity.LocalPlayer
 import org.cloudburstmc.math.vector.Vector3f
+import org.cloudburstmc.protocol.bedrock.data.entity.EntityDataTypes
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -50,13 +52,88 @@ object RotationUtils {
     fun lookAt(player: Entity, target: Entity): Vector3f = lookAt(player.vec3Position, target.vec3Position)
 
     /**
+     * Hard physical limits, not tuning knobs: a vanilla client cannot turn more than this per tick
+     * without it being a camera snap, and the body yaw never strays further than this from the head.
+     */
+    private const val MAX_TURN_PER_TICK_DEG = 60f
+    private const val MAX_BODY_HEAD_DELTA_DEG = 75f
+
+    private const val DEFAULT_WIDTH = 0.6f
+    private const val DEFAULT_HEIGHT = 1.8f
+    private const val PLAYER_EYE_HEIGHT = 1.62f
+
+    private var jitterPhase = 0
+
+    /**
+     * Closest point on the target's hitbox to the observer's eye, given a predicted centre.
+     * Target positions for players are already at eye level; mobs are at their feet.
+     */
+    fun hitboxAimPoint(player: Entity, target: Entity, predictedPosition: Vector3f): Vector3f {
+        val width = (target.metadata[EntityDataTypes.WIDTH] as? Float)?.takeIf { it > 0f } ?: DEFAULT_WIDTH
+        val height = (target.metadata[EntityDataTypes.HEIGHT] as? Float)?.takeIf { it > 0f } ?: DEFAULT_HEIGHT
+        val half = width / 2f
+
+        val feetY = if (target is com.retrivedmods.wclient.game.entity.Player) predictedPosition.y - PLAYER_EYE_HEIGHT else predictedPosition.y
+        val eye = player.vec3Position
+
+        val x = eye.x.coerceIn(predictedPosition.x - half, predictedPosition.x + half)
+        val z = eye.z.coerceIn(predictedPosition.z - half, predictedPosition.z + half)
+        // Aim slightly below the top so pitch error does not skim over the box.
+        val y = eye.y.coerceIn(feetY + 0.1f, feetY + height - 0.1f)
+        return Vector3f.from(x, y, z)
+    }
+
+    /**
      * Silently aims the server-side rotation at [point] for the current tick.
      * Nothing is sent to the client.
+     *
+     * Legitimacy: the turn from the last rotation the server received is capped at a physical
+     * per-tick maximum (spread over the next tick, not a speed setting), body yaw stays within
+     * the vanilla head/body limit, and a sub-degree deterministic jitter keeps consecutive packets
+     * from being bit-identical.
      */
     fun aimSilently(player: LocalPlayer, point: Vector3f): Vector3f {
-        val rotation = lookAt(player.vec3Position, point)
+        val wanted = lookAt(player.vec3Position, point)
+        val last = player.serverRotation
+
+        var pitch = wanted.x
+        var headYaw = wanted.y
+
+        val yawDelta = getAngleDifference(headYaw, last.z)
+        if (abs(yawDelta) > MAX_TURN_PER_TICK_DEG) {
+            headYaw = last.z + sign(yawDelta) * MAX_TURN_PER_TICK_DEG
+        }
+        val pitchDelta = pitch - last.x
+        if (abs(pitchDelta) > MAX_TURN_PER_TICK_DEG) {
+            pitch = last.x + sign(pitchDelta) * MAX_TURN_PER_TICK_DEG
+        }
+
+        // Body yaw follows the head but may lag behind within the vanilla limit.
+        var bodyYaw = last.y
+        val bodyDelta = getAngleDifference(headYaw, bodyYaw)
+        if (abs(bodyDelta) > MAX_BODY_HEAD_DELTA_DEG) {
+            bodyYaw = headYaw - sign(bodyDelta) * MAX_BODY_HEAD_DELTA_DEG
+        }
+
+        jitterPhase = (jitterPhase + 1) and 7
+        val jitter = (jitterPhase - 3.5f) * 0.04f   // +-0.14 deg, deterministic
+
+        val rotation = Vector3f.from(
+            (pitch + jitter * 0.5f).coerceIn(-90f, 90f),
+            wrapDegrees(bodyYaw + jitter),
+            wrapDegrees(headYaw + jitter)
+        )
         player.silentRotation = rotation
         return rotation
+    }
+
+    private fun sign(v: Float) = if (v < 0f) -1f else 1f
+
+    private fun wrapDegrees(deg: Float): Float {
+        var d = deg % 360f
+        if (d >= 180f) d -= 360f
+        if (d < -180f) d += 360f
+        return d
     }
 
     /** Horizontal distance the player moved during the last tick (blocks / tick). */
