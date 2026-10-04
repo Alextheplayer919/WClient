@@ -3,11 +3,14 @@ package com.retrivedmods.wclient.game.module.combat
 import com.retrivedmods.wclient.game.InterceptablePacket
 import com.retrivedmods.wclient.game.Module
 import com.retrivedmods.wclient.game.ModuleCategory
+import com.retrivedmods.wclient.game.ModuleManager
 import com.retrivedmods.wclient.game.entity.*
 import com.retrivedmods.wclient.game.friend.FriendManager
 import com.retrivedmods.wclient.game.utils.math.RotationUtils
 import com.retrivedmods.wclient.game.utils.math.TargetPredictor
 import org.cloudburstmc.math.vector.Vector3f
+import org.cloudburstmc.protocol.bedrock.packet.CorrectPlayerMovePredictionPacket
+import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 
 class WAuraModule : Module("WAura", ModuleCategory.Combat) {
@@ -27,11 +30,21 @@ class WAuraModule : Module("WAura", ModuleCategory.Combat) {
     private var targetMode by intValue("Target Mode", 2, 0..2)
     private var switchDelay by intValue("Switch Delay", 100, 20..100)
 
+    private var strafe by boolValue("strafe", false)
+    private val strafeRadius by floatValue("strafe_radius", 2.5f, 1f..6f)
+
+    /**
+     * Which way the player travels around the target while strafing. There is deliberately no
+     * speed setting: the fly module sets the pace and the orbit only bends that movement.
+     */
+    private var spinDirection by enumValue("spin_direction", RotationUtils.SpinDirection.LEFT, RotationUtils.SpinDirection::class.java)
+
     private var lastAttackNanoTime = 0L
     private var lastSwitchTime = 0L
     private var switchIndex = 0
     private var currentTarget: Entity? = null
     private val predictor = TargetPredictor()
+    private val orbit = RotationUtils.Orbit()
 
     /**
      * Shared prediction entry point for Killaura while WAura is enabled. This lets Killaura aim
@@ -57,35 +70,58 @@ class WAuraModule : Module("WAura", ModuleCategory.Combat) {
     override fun onDisabled() {
         super.onDisabled()
         predictor.reset()
+        orbit.reset()
         currentTarget = null
     }
 
     override fun onDisconnect(reason: String) {
         predictor.reset()
+        orbit.reset()
         currentTarget = null
     }
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled) return
         val packet = interceptablePacket.packet
+
+        // Server teleports and Bedrock movement-prediction corrections invalidate the orbit's
+        // anchor. Do not immediately replay movement after a correction.
+        if (packet is CorrectPlayerMovePredictionPacket ||
+            (packet is MovePlayerPacket &&
+                packet.runtimeEntityId == session.localPlayer.runtimeEntityId &&
+                (packet.mode == MovePlayerPacket.Mode.TELEPORT || packet.mode == MovePlayerPacket.Mode.RESPAWN))
+        ) {
+            orbit.onServerCorrection()
+            return
+        }
+
         if (packet !is PlayerAuthInputPacket) return
+
+        val localPlayer = session.localPlayer
+        val tick = packet.tick
+        val candidates = session.level.entityMap.values
+            .filter { it.isTarget() && it.distance(localPlayer) <= rangeValue }
+        candidates.forEach { predictor.record(it, tick) }
+
+        val aimTarget = currentTarget?.takeIf { it.distance(localPlayer) <= rangeValue }
+            ?: candidates.minByOrNull { it.distance(localPlayer) }
 
         // Silent, instant aim at the current/closest target every tick - no rotation speed of its
         // own and nothing is sent to the client, so the camera never moves.
         if (rotations) {
-            val localPlayer = session.localPlayer
-            val candidates = session.level.entityMap.values
-                .filter { it.isTarget() && it.distance(localPlayer) <= rangeValue }
-            val tick = packet.tick
-            candidates.forEach { predictor.record(it, tick) }
-
-            val aimTarget = currentTarget?.takeIf { it.distance(localPlayer) <= rangeValue }
-                ?: candidates.minByOrNull { it.distance(localPlayer) }
             aimTarget?.let { target ->
                 predictedAimPoint(localPlayer, target, tick)?.let { aimPoint ->
                     RotationUtils.aimSilently(localPlayer, aimPoint)
                 }
             }
+        }
+
+        // Spin around the target using the player's own movement (the fly). Killaura owns the orbit
+        // whenever it is strafing too, so two spin sources never fight over the same tick.
+        if (strafe && aimTarget != null && !killauraIsStrafing()) {
+            session.orbitAround(localPlayer, aimTarget, strafeRadius, tick, spinDirection, orbit)
+        } else {
+            orbit.reset()
         }
 
         val now = System.nanoTime()
@@ -137,6 +173,13 @@ class WAuraModule : Module("WAura", ModuleCategory.Combat) {
                 lastAttackNanoTime = now
             }
         }
+    }
+
+    /** Killaura spins too: when it does, it is the one that moves the player. */
+    private fun killauraIsStrafing(): Boolean {
+        val killaura = ModuleManager.modules
+            .firstOrNull { it is KillauraModule && it.isEnabled } as? KillauraModule
+        return killaura?.isStrafing == true
     }
 
     private fun searchForTargets(): List<Entity> {
