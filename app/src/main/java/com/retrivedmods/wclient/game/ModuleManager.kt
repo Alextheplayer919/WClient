@@ -53,6 +53,7 @@ import com.retrivedmods.wclient.game.module.motion.PlayerTPModule
 import com.retrivedmods.wclient.game.module.motion.SpeedModule
 import com.retrivedmods.wclient.game.module.motion.SpiderModule
 import com.retrivedmods.wclient.game.module.motion.SprintModule
+import com.retrivedmods.wclient.game.module.motion.TestFlyModule
 import com.retrivedmods.wclient.game.module.visual.CrosshairModule
 import com.retrivedmods.wclient.game.module.visual.DamageTextModule
 import com.retrivedmods.wclient.game.module.visual.ESPModule
@@ -106,6 +107,7 @@ object ModuleManager {
 
             // Motion
             add(MotionFlyModule())
+            add(TestFlyModule())
             add(PlayerTPModule())
             add(FlyModule())
             add(SpeedModule())
