@@ -53,7 +53,13 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
         wRelaySession.serverBound(packet)
     }
 
-    override fun beforePacketBound(packet: BedrockPacket): Boolean {
+    override fun beforeServerBound(packet: BedrockPacket): Boolean = handlePacket(packet, true)
+
+    override fun beforeClientBound(packet: BedrockPacket): Boolean = handlePacket(packet, false)
+
+    override fun beforePacketBound(packet: BedrockPacket): Boolean = handlePacket(packet, null)
+
+    private fun handlePacket(packet: BedrockPacket, serverBound: Boolean?): Boolean {
         when (packet) {
             is StartGamePacket -> {
                 try {
@@ -107,11 +113,11 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
         hitTracker.onPacket(packet)
         if (packet is PlayerAuthInputPacket) latency.tick()
 
-        val interceptablePacket = InterceptablePacket(packet)
+        val interceptablePacket = InterceptablePacket(packet, serverBound)
 
         for (module in ModuleManager.modules) {
-            // Set session if not already set
-            if (!module.isSessionCreated) {
+            // Refresh modules when reconnecting to a different session.
+            if (!module.isSessionCreated || module.session !== this) {
                 module.session = this
             }
             module.beforePacketBound(interceptablePacket)

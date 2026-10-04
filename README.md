@@ -98,3 +98,28 @@ Join the WClient community for support, updates, and discussions:
 Discord: [https://discord.gg/wclient](https://discord.gg/jVWPuDvdRX)
 
 *WClient is not affiliated with Mojang Studios or Microsoft.*
+
+### PopCounter and Chat Suffix
+
+Both modules are under **Misc** and are disabled by default.
+
+- **PopCounter** tracks nearby players (100 blocks), excluding yourself and friends.
+  Counts are shown locally as `[E]`. Enable **Send Chat** for randomized E-branded
+  announcements with a fresh 12–22 character alphanumeric tail. Messages are
+  queued (maximum 30) and sent at most once every 600 ms while movement packets
+  arrive. State and queued messages clear on disable, disconnect, dimension
+  change, and your death.
+- Pop detection uses the protocol's `CONSUME_TOTEM` event by default. Enable
+  **Offhand Polling** only for servers that omit this event: it checks every
+  150 ms, with a 1200 ms debounce. Polling is a heuristic and can mistake
+  manually removing a totem for a pop or miss an immediate replacement.
+- **Green Chat** uses a literal `> ` at the very beginning, for example
+  `> there goes your totem | abc123...`, not a formatting color code or `&gt;`.
+- **Chat Suffix** puts its editable, single-line **Text** at the **start** of
+  ordinary outgoing player chat (despite the module name). Edit it live in the
+  in-game WClient click-GUI overlay under **Misc → Chat Suffix**. When enabled,
+  the next sent message uses the new text without a restart or re-toggle. It
+  accepts arbitrary text, subject to chat/server limits, and can add green chat
+  and a random alphanumeric tail. Server `/commands` and client `.commands`
+  stay untouched, and incoming chat is never rewritten. It does not modify
+  module-generated chat; PopCounter has its own green-chat setting and random tail.
