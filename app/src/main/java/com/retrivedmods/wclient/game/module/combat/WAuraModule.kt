@@ -5,12 +5,14 @@ import com.retrivedmods.wclient.game.Module
 import com.retrivedmods.wclient.game.ModuleCategory
 import com.retrivedmods.wclient.game.entity.*
 import com.retrivedmods.wclient.game.friend.FriendManager
+import com.retrivedmods.wclient.game.utils.math.RotationUtils
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 
 class WAuraModule : Module("WAura", ModuleCategory.Combat) {
 
     private var playersOnly by boolValue("players_only", true)
     private var mobsOnly by boolValue("mobs_only", false)
+    private var rotations by boolValue("rotations", true)
 
     private var rangeValue by floatValue("range", 50f, 2f..50f)
     private var cpsValue by intValue("cps", 25, 1..50)
@@ -26,7 +28,17 @@ class WAuraModule : Module("WAura", ModuleCategory.Combat) {
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled) return
-        if (interceptablePacket.packet !is PlayerAuthInputPacket) return
+        val packet = interceptablePacket.packet
+        if (packet !is PlayerAuthInputPacket) return
+
+        // Instant aim at the current/closest target every tick - no rotation speed of its own.
+        if (rotations) {
+            val aimTarget = currentTarget?.takeIf { it.distance(session.localPlayer) <= rangeValue }
+                ?: session.level.entityMap.values
+                    .filter { it.isTarget() && it.distance(session.localPlayer) <= rangeValue }
+                    .minByOrNull { it.distance(session.localPlayer) }
+            aimTarget?.let { RotationUtils.aim(packet, session.localPlayer, it) }
+        }
 
         val now = System.nanoTime()
         val nowMillis = System.currentTimeMillis()
