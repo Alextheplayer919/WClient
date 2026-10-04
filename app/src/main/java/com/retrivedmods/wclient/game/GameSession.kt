@@ -53,9 +53,13 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
         wRelaySession.serverBound(packet)
     }
 
-    override fun beforeServerBound(packet: BedrockPacket): Boolean = handlePacket(packet, true)
+    // WRelay's beforeClientBound hook receives packets sent by the local game client
+    // to the upstream server. beforeServerBound receives packets coming back from the
+    // upstream server, so keep InterceptablePacket.serverBound aligned with its
+    // documented client -> server meaning.
+    override fun beforeServerBound(packet: BedrockPacket): Boolean = handlePacket(packet, false)
 
-    override fun beforeClientBound(packet: BedrockPacket): Boolean = handlePacket(packet, false)
+    override fun beforeClientBound(packet: BedrockPacket): Boolean = handlePacket(packet, true)
 
     override fun beforePacketBound(packet: BedrockPacket): Boolean = handlePacket(packet, null)
 
