@@ -17,7 +17,7 @@ object ChatFormat {
         val trimmedMessage = message.trimStart()
         val body = if (green) trimmedMessage.removePrefix("> ").removePrefix(">") else trimmedMessage
         val text = listOf(prefix.trim().replace("\n", " ").replace("\r", " "), body)
-            .filter { it.isNotEmpty() }.joinToString(" ")
+            .filter { it.isNotEmpty() }.joinToString(" | ")
         return (if (green) "> " else "") + text + (if (random) " | ${randomString()}" else "")
     }
 }

@@ -120,6 +120,8 @@ Both modules are under **Misc** and are disabled by default.
   in-game WClient click-GUI overlay under **Misc → Chat Suffix**. When enabled,
   the next sent message uses the new text without a restart or re-toggle. It
   accepts arbitrary text, subject to chat/server limits, and can add green chat
-  and a random alphanumeric tail. Server `/commands` and client `.commands`
+  and a random alphanumeric tail. The text, the message, and the random tail are
+  separated by ` | `, for example `E | hello` or `E | hello | abc123...`.
+  Server `/commands` and client `.commands`
   stay untouched, and incoming chat is never rewritten. It does not modify
   module-generated chat; PopCounter has its own green-chat setting and random tail.

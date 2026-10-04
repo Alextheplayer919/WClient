@@ -6,7 +6,7 @@ import com.retrivedmods.wclient.game.ModuleCategory
 import com.retrivedmods.wclient.game.utils.ChatFormat
 import org.cloudburstmc.protocol.bedrock.packet.TextPacket
 
-/** Prefixes ordinary outgoing chat with the configured text and optional random tail. */
+/** Prefixes ordinary outgoing chat with the configured text, separated by " | ", plus an optional random tail. */
 class ChatSuffixModule : Module("Chat Suffix", ModuleCategory.Misc) {
 
     private val chatSuffix by stringValue("Chat Suffix", "E", emptyList())
