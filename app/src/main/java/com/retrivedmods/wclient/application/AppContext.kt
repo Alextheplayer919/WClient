@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Process
 import com.retrivedmods.wclient.activity.CrashHandlerActivity
+import com.retrivedmods.wclient.util.P1363SignatureProvider
 
 class AppContext : Application(), Thread.UncaughtExceptionHandler {
 
@@ -20,6 +21,9 @@ class AppContext : Application(), Thread.UncaughtExceptionHandler {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // Android lacks SHA256withECDSAinP1363Format; MinecraftAuth needs it to sign Xbox requests.
+        P1363SignatureProvider.install()
 
         Thread.setDefaultUncaughtExceptionHandler(this)
     }
