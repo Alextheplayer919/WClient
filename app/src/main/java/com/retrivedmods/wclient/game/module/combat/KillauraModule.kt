@@ -38,7 +38,12 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
     private var strafe by boolValue("strafe", false)
     private val strafeRadius by floatValue("strafe_radius", 2.5f, 1f..6f)
-    private var strafeSpeed by floatValue("strafe_speed", 0.15f, 0.05f..0.30f)
+
+    /**
+     * Which way the player travels around the target while strafing. There is deliberately no
+     * speed setting: the fly module sets the pace and the orbit only bends that movement.
+     */
+    private var spinDirection by enumValue("spin_direction", RotationUtils.SpinDirection.LEFT, RotationUtils.SpinDirection::class.java)
 
 
 
@@ -48,6 +53,15 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     private var tpCooldown = 0L
     private val orbit = RotationUtils.Orbit()
     private val predictor = TargetPredictor()
+
+    private var orbitCommanded = false
+
+    /**
+     * True while this module is actually moving the player around a target. WAura checks this so
+     * two spin sources never fight over the player's position on the same tick.
+     */
+    internal val isStrafing: Boolean
+        get() = strafe && orbitCommanded
 
 
 
@@ -106,11 +120,12 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
         if (targets.isEmpty()) {
             orbit.reset()
             predictor.reset()
+            orbitCommanded = false
             return
         }
 
-        // Rotations and strafing run every tick, independently of attack CPS. Orbit speed is a
-        // configured constant, so knockback and changing air-control velocity do not change pace.
+        // Rotations and strafing run every tick, independently of attack CPS. Orbit speed comes
+        // from the player's own movement (the fly), never from a value of ours.
         val player = session.localPlayer
         val primary = targets.first()
         val tick = packet.tick
@@ -139,8 +154,9 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
             RotationUtils.aimSilently(player, aimPoint)
         }
         if (strafe) {
-            strafeAroundTarget(primary, tick)
+            orbitCommanded = strafeAroundTarget(primary, tick)
         } else {
+            orbitCommanded = false
             orbit.reset()
         }
 
@@ -226,26 +242,12 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
 
     /**
-     * Orbits at a configured constant speed. Positions are still bounded per packet and re-anchored
-     * to the current target, avoiding a snap when the target or configured radius changes.
+     * Spins the player around the target using nothing but their own movement: the orbit advances
+     * by the distance the fly carried the player this tick and re-places them on the radius, so the
+     * player circles the target instead of flying past it. Standing still means no spin.
      */
-    private fun strafeAroundTarget(entity: Entity, tick: Long) {
-        val player = session.localPlayer
-        val next = orbit.next(player, entity, strafeRadius, tick, strafeSpeed) ?: return
-
-        session.clientBound(
-            MovePlayerPacket().apply {
-                runtimeEntityId = player.runtimeEntityId
-                position = next
-                rotation = player.vec3Rotation
-                mode = MovePlayerPacket.Mode.NORMAL
-                // Killaura strafing is primarily used airborne; do not claim ground contact.
-                onGround = false
-                // Qualify: the function parameter `tick` would otherwise hide this packet field.
-                this.tick = player.tickExists
-            }
-        )
-    }
+    private fun strafeAroundTarget(entity: Entity, tick: Long): Boolean =
+        session.orbitAround(session.localPlayer, entity, strafeRadius, tick, spinDirection, orbit)
 
 
     private fun EntityUnknown.isMob(): Boolean {

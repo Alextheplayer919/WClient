@@ -37,9 +37,9 @@ fun getAngleDifference(a: Float, b: Float) = ((a - b) % 360f + 540f) % 360f - 18
  *    rotation via [LocalPlayer.silentRotation], and GameSession swaps it into the outgoing
  *    PlayerAuthInputPacket. The player's camera is untouched.
  *  - Aiming is instant. A combat module never has its own rotation speed.
- *  - Orbiting (strafing) uses a configured, steady speed rather than noisy sampled player speed.
- *    Output steps are bounded and pause briefly after server corrections, so a noisy sample cannot
- *    produce a position snap.
+ *  - Orbiting (strafing) has no speed of its own either. The travel each tick is the distance the
+ *    player actually covered on their own - i.e. whatever the fly/motion modules are doing - and
+ *    the orbit only bends that travel around the target. Standing still means no orbit.
  */
 object RotationUtils {
 
@@ -136,34 +136,66 @@ object RotationUtils {
         return d
     }
 
+    /** Which way the player travels around the target while spinning. */
+    enum class SpinDirection {
+        /** Counter-clockwise around the target: the player's left when facing it. */
+        LEFT,
+
+        /** Clockwise around the target: the player's right when facing it. */
+        RIGHT
+    }
+
     /**
-     * Tracks a bounded orbit around a target at a fixed, caller-configured speed. Each emitted
-     * position is rate-limited to avoid snapping, but ordinary player-velocity fluctuations do not
-     * change the orbit rate.
+     * Tracks an orbit around a target whose pace is the player's own movement instead of a
+     * configured speed. The fly module decides how fast the player travels and this class only
+     * bends that travel around the target, so there is nothing to tune and no "blocks per second"
+     * anywhere: standing still means no orbit, fast fly means a fast spin.
+     *
+     * Each tick advances the player around the target by exactly the distance the client covered on
+     * its own since the last position this class commanded - i.e. the fly's pace - while walking
+     * them back onto the configured radius. The measurement deliberately excludes the commanded
+     * steps, so the orbit cannot feed its own speed back into itself, and what stops the player from
+     * being carried past the target is the radius, not a speed limit.
      */
     class Orbit {
 
         companion object {
-            private const val DEFAULT_ORBIT_SPEED_PER_TICK = 0.15f
-            private const val MIN_ORBIT_SPEED_PER_TICK = 0.05f
-            private const val MAX_ORBIT_SPEED_PER_TICK = 0.30f
-            private const val MAX_OBSERVED_SPEED_PER_TICK = 3.0f
-            private const val MAX_CORRECTION_DISTANCE = 4.0f
-            private const val MAX_ANGLE_STEP = 0.35f
-            private const val MAX_OUTPUT_STEP = 0.30f
-            private const val MIN_OUTPUT_STEP = 0.01f
+            /**
+             * Above this per tick the "movement" is a lagback/teleport rather than flying; the
+             * orbit releases instead of chasing it. High enough for any legit motion module.
+             */
+            private const val MAX_PLAUSIBLE_TRAVEL_PER_TICK = 8f
+
+            /** Below this the player is not going anywhere and there is nothing to bend. */
+            private const val MIN_TRAVEL_PER_TICK = 0.02f
+
+            private const val MIN_RADIUS = 0.6f
+            private const val FALLBACK_RADIUS = 2.5f
             private const val CORRECTION_SETTLE_TICKS = 3
+
+            /** Rises instantly with the fly, decays smoothly, so one noisy tick cannot double it. */
+            private const val SPEED_DECAY = 0.5f
+
+            /** Only take over once the player is this close to the orbit; otherwise the fly closes in. */
+            private const val CAPTURE_RADIUS_FACTOR = 2f
+            private const val CAPTURE_MARGIN = 2f
         }
 
         private var targetId: Long? = null
-        private var lastPlayerPosition: Vector3f? = null
         private var lastTick: Long? = null
+
+        /** Last position the orbit told the client to be at; the anchor for the next measurement. */
+        private var commandedPosition: Vector3f? = null
+
+        /** Smoothed travel per tick, in blocks per tick, as produced by the player's own movement. */
+        private var travelPerTick = 0f
         private var settleTicks = 0
 
         fun reset() {
             targetId = null
-            lastPlayerPosition = null
             lastTick = null
+            commandedPosition = null
+            travelPerTick = 0f
             settleTicks = 0
         }
 
@@ -173,89 +205,118 @@ object RotationUtils {
          */
         fun onServerCorrection() {
             targetId = null
-            lastPlayerPosition = null
             lastTick = null
+            commandedPosition = null
+            travelPerTick = 0f
             settleTicks = CORRECTION_SETTLE_TICKS
         }
 
         /**
-         * Returns the next bounded orbit position around [target]. [speedPerTick] is a stable
-         * tangential speed in blocks per game tick, independent of the player's current velocity.
-         * Position discontinuities are used only to detect corrections, never to tune orbit speed.
+         * Returns the next orbit position around [target], or null when the orbit should not move
+         * the player this tick (new target, still settling after a correction, or not moving).
+         *
+         * [direction] is the requested spin: LEFT is counter-clockwise around the target, RIGHT is
+         * clockwise, both as seen from above while the player faces the target.
          */
         fun next(
             player: Entity,
             target: Entity,
             radius: Float,
             tick: Long,
-            speedPerTick: Float = DEFAULT_ORBIT_SPEED_PER_TICK
+            direction: SpinDirection
         ): Vector3f? {
             val current = player.vec3Position
+
+            // New target: anchor on the player's real position and let the fly move first, so the
+            // first measurement is pure player movement rather than a snap onto the orbit.
             if (targetId != target.runtimeEntityId) {
                 targetId = target.runtimeEntityId
-                lastPlayerPosition = current
                 lastTick = tick
+                commandedPosition = current
+                travelPerTick = 0f
                 if (settleTicks > 0) settleTicks--
                 return null
             }
 
-            val previous = lastPlayerPosition ?: current
-            val elapsedTicks = (tick - (lastTick ?: tick - 1L)).coerceAtLeast(1L)
-            val dx = current.x - previous.x
-            val dy = current.y - previous.y
-            val dz = current.z - previous.z
-            val observedDistance = hypot(dx, dz)
-            val totalObservedDistance = hypot(observedDistance, dy)
-            val observedSpeed = observedDistance / elapsedTicks.toFloat()
-            lastPlayerPosition = current
+            val elapsedTicks = (tick - (lastTick ?: tick)).coerceAtLeast(1L).toFloat()
             lastTick = tick
 
-            if (settleTicks > 0) {
-                settleTicks--
+            val anchor = commandedPosition
+            if (anchor == null) {
+                commandedPosition = current
                 return null
             }
 
-            // A large discontinuity is a teleport/correction, not useful movement input. Rebase
-            // and briefly settle rather than allowing the old orbit to fight the server correction.
-            if (!observedSpeed.isFinite() || observedSpeed > MAX_OBSERVED_SPEED_PER_TICK ||
-                totalObservedDistance > MAX_CORRECTION_DISTANCE
-            ) {
+            // How far the client moved on its own since the last command: this is the fly's work,
+            // with the orbit's own steps subtracted out.
+            val freeTravel = hypot(current.x - anchor.x, current.z - anchor.z) / elapsedTicks
+            if (!freeTravel.isFinite() || freeTravel > MAX_PLAUSIBLE_TRAVEL_PER_TICK) {
                 onServerCorrection()
                 return null
             }
+            travelPerTick = if (freeTravel > travelPerTick) {
+                freeTravel
+            } else {
+                travelPerTick + (freeTravel - travelPerTick) * SPEED_DECAY
+            }
 
-            val r = radius.takeIf { it.isFinite() }?.coerceAtLeast(0.1f) ?: 2.5f
-            val relativeX = current.x - target.posX
-            val relativeZ = current.z - target.posZ
-            if (hypot(relativeX, relativeZ) < 0.1f) return null
+            if (settleTicks > 0) {
+                settleTicks--
+                commandedPosition = current
+                return null
+            }
+            if (travelPerTick < MIN_TRAVEL_PER_TICK) {
+                // Not moving (or not flying): the orbit does not advance on its own.
+                commandedPosition = current
+                return null
+            }
 
-            val speed = speedPerTick.takeIf { it.isFinite() }
-                ?.coerceIn(MIN_ORBIT_SPEED_PER_TICK, MAX_ORBIT_SPEED_PER_TICK)
-                ?: DEFAULT_ORBIT_SPEED_PER_TICK
-            val travel = (speed * elapsedTicks.toFloat()).coerceAtMost(MAX_OUTPUT_STEP)
+            val r = radius.takeIf { it.isFinite() }?.coerceAtLeast(MIN_RADIUS) ?: FALLBACK_RADIUS
+            val relativeX = anchor.x - target.posX
+            val relativeZ = anchor.z - target.posZ
+            val distanceToTarget = hypot(relativeX, relativeZ)
+            if (distanceToTarget < 1e-3f) {
+                commandedPosition = current
+                return null
+            }
 
-            // Rebase the phase on the player's actual position every tick. This keeps the orbit
-            // aligned after target movement, small corrections, and radius changes.
+            if (distanceToTarget > r * CAPTURE_RADIUS_FACTOR + CAPTURE_MARGIN) {
+                // Too far to orbit: let the fly bring us in rather than dragging the player across
+                // the map. The distance to the target shrinks by the fly's own speed.
+                commandedPosition = current
+                return null
+            }
+
+            val travel = (travelPerTick * elapsedTicks).coerceAtMost(MAX_PLAUSIBLE_TRAVEL_PER_TICK)
             val currentAngle = atan2(relativeZ, relativeX)
-            val nextAngle = currentAngle + (travel / r).coerceAtMost(MAX_ANGLE_STEP)
+            val arc = travel / r
+            val nextAngle = if (direction == SpinDirection.LEFT) currentAngle + arc else currentAngle - arc
+
             val desiredX = target.posX + cos(nextAngle) * r
             val desiredZ = target.posZ + sin(nextAngle) * r
 
-            var moveX = desiredX - current.x
-            var moveZ = desiredZ - current.z
+            var moveX = desiredX - anchor.x
+            var moveZ = desiredZ - anchor.z
             val requestedDistance = hypot(moveX, moveZ)
-            if (requestedDistance < 1e-4f) return null
+            if (requestedDistance < 1e-4f) {
+                commandedPosition = current
+                return null
+            }
 
-            // Keep the absolute step at the configured travel distance. If the player is
-            // off-radius or the target moved, convergence is gradual rather than a snap.
-            val maxStep = travel.coerceIn(MIN_OUTPUT_STEP, MAX_OUTPUT_STEP)
-            if (requestedDistance > maxStep) {
-                val scale = maxStep / requestedDistance
+            // The commanded step is never longer than the fly's own travel, so the player careers
+            // around the circle at flying speed and an off-radius player is walked back onto it at
+            // that same speed instead of being snapped there.
+            if (requestedDistance > travel) {
+                val scale = travel / requestedDistance
                 moveX *= scale
                 moveZ *= scale
             }
 
-            return Vector3f.from(current.x + moveX, current.y, current.z + moveZ)
+            // Stepped from our own last command, not from the client's drifting report, so the pace
+            // the player travels at is the fly's pace and nothing is added on top of it.
+            val next = Vector3f.from(anchor.x + moveX, current.y, anchor.z + moveZ)
+            commandedPosition = next
+            return next
         }
     }
 }
