@@ -5,12 +5,19 @@ import com.retrivedmods.wclient.game.Module
 import com.retrivedmods.wclient.game.ModuleCategory
 import com.retrivedmods.wclient.game.entity.*
 import com.retrivedmods.wclient.game.friend.FriendManager
+import com.retrivedmods.wclient.game.utils.math.RotationUtils
+import com.retrivedmods.wclient.game.utils.math.TargetPredictor
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 
 class WAuraModule : Module("WAura", ModuleCategory.Combat) {
 
     private var playersOnly by boolValue("players_only", true)
     private var mobsOnly by boolValue("mobs_only", false)
+    private var rotations by boolValue("rotations", true)
+    private var prediction by boolValue("prediction", true)
+    private var autoPrediction by boolValue("auto_prediction", true)
+    private var predictionTicks by intValue("prediction_ticks", 2, 0..10)
+    private var hitboxAim by boolValue("hitbox_aim", true)
 
     private var rangeValue by floatValue("range", 50f, 2f..50f)
     private var cpsValue by intValue("cps", 25, 1..50)
@@ -23,10 +30,40 @@ class WAuraModule : Module("WAura", ModuleCategory.Combat) {
     private var lastSwitchTime = 0L
     private var switchIndex = 0
     private var currentTarget: Entity? = null
+    private val predictor = TargetPredictor()
+
+    override fun onDisabled() {
+        super.onDisabled()
+        predictor.reset()
+        currentTarget = null
+    }
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled) return
-        if (interceptablePacket.packet !is PlayerAuthInputPacket) return
+        val packet = interceptablePacket.packet
+        if (packet !is PlayerAuthInputPacket) return
+
+        // Silent, instant aim at the current/closest target every tick - no rotation speed of its
+        // own and nothing is sent to the client, so the camera never moves.
+        if (rotations) {
+            val localPlayer = session.localPlayer
+            val candidates = session.level.entityMap.values
+                .filter { it.isTarget() && it.distance(localPlayer) <= rangeValue }
+            val tick = packet.tick
+            candidates.forEach { predictor.record(it, tick) }
+
+            val aimTarget = currentTarget?.takeIf { it.distance(localPlayer) <= rangeValue }
+                ?: candidates.minByOrNull { it.distance(localPlayer) }
+            aimTarget?.let {
+                val lookahead = if (autoPrediction) {
+                    session.latency.lookaheadTicks + session.hitTracker.predictionOffsetTicks
+                } else predictionTicks.toFloat()
+                val predicted = if (prediction) predictor.predict(localPlayer, it, lookahead.coerceAtLeast(0f), tick)
+                else it.vec3Position
+                val aimPoint = if (hitboxAim) RotationUtils.hitboxAimPoint(localPlayer, it, predicted) else predicted
+                RotationUtils.aimSilently(localPlayer, aimPoint)
+            }
+        }
 
         val now = System.nanoTime()
         val nowMillis = System.currentTimeMillis()

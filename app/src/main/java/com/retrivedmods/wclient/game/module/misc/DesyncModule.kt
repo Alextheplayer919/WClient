@@ -34,7 +34,7 @@ class DesyncModule : Module("desync", ModuleCategory.Misc) {
             while (storedPackets.isNotEmpty()) {
                 val packet = storedPackets.poll()
                 if (packet != null) {
-                    session.clientBound(packet)
+                    session.serverBound(packet)
                 }
                 delay(Random.nextLong(minResendInterval, maxResendInterval))
             }

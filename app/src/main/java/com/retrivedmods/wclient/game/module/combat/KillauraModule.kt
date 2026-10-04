@@ -5,6 +5,8 @@ import com.retrivedmods.wclient.game.Module
 import com.retrivedmods.wclient.game.ModuleCategory
 import com.retrivedmods.wclient.game.entity.*
 import com.retrivedmods.wclient.game.friend.FriendManager
+import com.retrivedmods.wclient.game.utils.math.RotationUtils
+import com.retrivedmods.wclient.game.utils.math.TargetPredictor
 import org.cloudburstmc.math.vector.Vector3f
 import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
@@ -19,7 +21,11 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     private var playersOnly by boolValue("players_only", true)
     private var mobsOnly by boolValue("mobs_only", false)
     private var antiBot by boolValue("anti_bot", true)
-
+    private var rotations by boolValue("rotations", true)
+    private var prediction by boolValue("prediction", true)
+    private var autoPrediction by boolValue("auto_prediction", true)
+    private var predictionTicks by intValue("prediction_ticks", 2, 0..10)
+    private var hitboxAim by boolValue("hitbox_aim", true)
 
     private var tpAuraEnabled by boolValue("tp_aura", false)
     private var teleportBehind by boolValue("tp_behind", false)
@@ -29,7 +35,6 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
 
     private var strafe by boolValue("strafe", false)
-    private val strafeSpeed by floatValue("strafe_speed", 2.5f, 1f..4f)
     private val strafeRadius by floatValue("strafe_radius", 2.5f, 1f..6f)
 
 
@@ -38,7 +43,8 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
     private var lastAttackTime = 0L
     private var tpCooldown = 0L
-    private var strafeAngle = 0f
+    private val orbit = RotationUtils.Orbit()
+    private val predictor = TargetPredictor()
 
 
 
@@ -64,20 +70,48 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
 
 
+    override fun onDisabled() {
+        super.onDisabled()
+        orbit.reset()
+        predictor.reset()
+    }
+
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled) return
-        if (interceptablePacket.packet !is PlayerAuthInputPacket) return
+        val packet = interceptablePacket.packet
+        if (packet !is PlayerAuthInputPacket) return
+
+        val targets = searchForTargets()
+            .filterNot { it is Player && FriendManager.isFriend(it.uuid) }
+        if (targets.isEmpty()) {
+            orbit.reset()
+            return
+        }
+
+        // Rotations and strafing run every tick, independently of the attack CPS, so the server
+        // always sees us facing the primary target and the orbit follows real movement speed.
+        val player = session.localPlayer
+        val primary = targets.first()
+        val tick = packet.tick
+        targets.forEach { predictor.record(it, tick) }
+
+        if (rotations) {
+            val lookahead = if (autoPrediction) {
+                session.latency.lookaheadTicks + session.hitTracker.predictionOffsetTicks
+            } else predictionTicks.toFloat()
+            val predicted = if (prediction) predictor.predict(player, primary, lookahead.coerceAtLeast(0f), tick)
+            else primary.vec3Position
+            val aimPoint = if (hitboxAim) RotationUtils.hitboxAimPoint(player, primary, predicted) else predicted
+            // Silent: only the server-bound rotation changes, the camera is never moved.
+            RotationUtils.aimSilently(player, aimPoint)
+        }
+        if (strafe) strafeAroundTarget(primary)
 
         val now = System.currentTimeMillis()
         val delay = 1000L / cpsValue
         if (now - lastAttackTime < delay) return
 
-        val targets = searchForTargets()
-        if (targets.isEmpty()) return
-
         for (target in targets) {
-
-            if (target is Player && FriendManager.isFriend(target.uuid)) continue
 
             if (tpAuraEnabled && now - tpCooldown >= tpSpeed) {
                 teleportTo(target)
@@ -88,8 +122,6 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
             repeat(packets) {
                 session.localPlayer.attack(target)
             }
-
-            if (strafe) strafeAroundTarget(target)
         }
 
         lastAttackTime = now
@@ -147,7 +179,7 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
             MovePlayerPacket().apply {
                 runtimeEntityId = player.runtimeEntityId
                 position = tpPos
-                rotation = entity.vec3Rotation
+                rotation = player.vec3Rotation
                 mode = MovePlayerPacket.Mode.NORMAL
                 onGround = false
                 tick = player.tickExists
@@ -156,22 +188,22 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     }
 
 
+    /**
+     * Orbits the target using the player's actual movement speed (whatever the motion modules
+     * produce) - there is no strafe speed of its own. Standing still means no orbit.
+     */
     private fun strafeAroundTarget(entity: Entity) {
-        val pos = entity.vec3Position
-        strafeAngle += strafeSpeed
-        if (strafeAngle >= 360f) strafeAngle -= 360f
-
-        val x = strafeRadius * cos(strafeAngle)
-        val z = strafeRadius * sin(strafeAngle)
+        val player = session.localPlayer
+        val next = orbit.next(player, entity, strafeRadius) ?: return
 
         session.clientBound(
             MovePlayerPacket().apply {
-                runtimeEntityId = session.localPlayer.runtimeEntityId
-                position = pos.add(x.toFloat(), 0f, z.toFloat())
-                rotation = Vector3f.ZERO
+                runtimeEntityId = player.runtimeEntityId
+                position = next
+                rotation = player.vec3Rotation
                 mode = MovePlayerPacket.Mode.NORMAL
                 onGround = true
-                tick = session.localPlayer.tickExists
+                tick = player.tickExists
             }
         )
     }
