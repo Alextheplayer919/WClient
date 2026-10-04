@@ -12,6 +12,8 @@ import com.retrivedmods.wrelay.WRelaySession
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket
 import org.cloudburstmc.protocol.bedrock.packet.ItemComponentPacket
+import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
+import org.cloudburstmc.math.vector.Vector2f
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket
 import org.cloudburstmc.protocol.bedrock.packet.TextPacket
 import org.cloudburstmc.protocol.common.SimpleDefinitionRegistry
@@ -106,7 +108,38 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
             }
         }
 
+        if (packet is PlayerAuthInputPacket) {
+            return applySilentRotation(packet)
+        }
+
         return false
+    }
+
+    /**
+     * Silent rotations: the relay normally forwards the raw bytes of a packet, so editing the
+     * decoded object does nothing. When a combat module requested a rotation we drop the raw
+     * packet and re-send the same (re-encoded) packet with only the rotation replaced. The
+     * client never receives anything, so the player's camera is untouched.
+     */
+    private fun applySilentRotation(packet: PlayerAuthInputPacket): Boolean {
+        val rotation = localPlayer.silentRotation
+        localPlayer.silentRotation = null
+
+        if (rotation == null) {
+            localPlayer.onServerRotationSent(packet.rotation)
+            return false
+        }
+
+        packet.rotation = rotation
+        if (packet.interactRotation != null) {
+            packet.interactRotation = Vector2f.from(rotation.x, rotation.y)
+        }
+        localPlayer.onServerRotationSent(rotation)
+
+        serverBound(packet)
+        // We intercepted the original, so the relay will not fire the "after" hooks itself.
+        afterPacketBound(packet)
+        return true
     }
 
     override fun afterPacketBound(packet: BedrockPacket) {

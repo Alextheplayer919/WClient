@@ -47,6 +47,22 @@ class LocalPlayer(val session: GameSession) : Player(0L, 0L, UUID.randomUUID(), 
     var openContainer: AbstractInventory? = null
         private set
 
+    /**
+     * Rotation (pitch, yaw, headYaw) that should be sent to the server with the next
+     * PlayerAuthInputPacket instead of the real camera rotation. Set by combat modules,
+     * consumed and cleared by GameSession. The client's camera is never changed.
+     */
+    @Volatile
+    var silentRotation: Vector3f? = null
+
+    /** Last rotation the server actually received from us (silent or real). */
+    var serverRotation: Vector3f = Vector3f.ZERO
+        private set
+
+    fun onServerRotationSent(rotation: Vector3f) {
+        serverRotation = rotation
+    }
+
     override fun onPacketBound(packet: BedrockPacket) {
         super.onPacketBound(packet)
         if (packet is StartGamePacket) {
@@ -123,6 +139,7 @@ class LocalPlayer(val session: GameSession) : Player(0L, 0L, UUID.randomUUID(), 
 
     override fun onDisconnect() {
         super.onDisconnect()
+        silentRotation = null
         reset()
     }
 

@@ -6,6 +6,7 @@ import com.retrivedmods.wclient.game.ModuleCategory
 import com.retrivedmods.wclient.game.entity.*
 import com.retrivedmods.wclient.game.friend.FriendManager
 import com.retrivedmods.wclient.game.utils.math.RotationUtils
+import com.retrivedmods.wclient.game.utils.math.TargetPredictor
 import org.cloudburstmc.math.vector.Vector3f
 import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
@@ -21,6 +22,8 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     private var mobsOnly by boolValue("mobs_only", false)
     private var antiBot by boolValue("anti_bot", true)
     private var rotations by boolValue("rotations", true)
+    private var prediction by boolValue("prediction", true)
+    private var predictionTicks by intValue("prediction_ticks", 2, 0..10)
 
     private var tpAuraEnabled by boolValue("tp_aura", false)
     private var teleportBehind by boolValue("tp_behind", false)
@@ -39,6 +42,7 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     private var lastAttackTime = 0L
     private var tpCooldown = 0L
     private val orbit = RotationUtils.Orbit()
+    private val predictor = TargetPredictor()
 
 
 
@@ -67,6 +71,7 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     override fun onDisabled() {
         super.onDisabled()
         orbit.reset()
+        predictor.reset()
     }
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
@@ -83,8 +88,16 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
         // Rotations and strafing run every tick, independently of the attack CPS, so the server
         // always sees us facing the primary target and the orbit follows real movement speed.
+        val player = session.localPlayer
         val primary = targets.first()
-        if (rotations) RotationUtils.aim(packet, session.localPlayer, primary)
+        targets.forEach { predictor.record(it) }
+
+        if (rotations) {
+            val aimPoint = if (prediction) predictor.predict(player, primary, predictionTicks.toFloat())
+            else primary.vec3Position
+            // Silent: only the server-bound rotation changes, the camera is never moved.
+            RotationUtils.aimSilently(player, aimPoint)
+        }
         if (strafe) strafeAroundTarget(primary)
 
         val now = System.currentTimeMillis()
@@ -159,7 +172,7 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
             MovePlayerPacket().apply {
                 runtimeEntityId = player.runtimeEntityId
                 position = tpPos
-                rotation = if (rotations) RotationUtils.lookAt(player, entity) else player.vec3Rotation
+                rotation = player.vec3Rotation
                 mode = MovePlayerPacket.Mode.NORMAL
                 onGround = false
                 tick = player.tickExists
@@ -180,7 +193,7 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
             MovePlayerPacket().apply {
                 runtimeEntityId = player.runtimeEntityId
                 position = next
-                rotation = if (rotations) RotationUtils.lookAt(player, entity) else player.vec3Rotation
+                rotation = player.vec3Rotation
                 mode = MovePlayerPacket.Mode.NORMAL
                 onGround = true
                 tick = player.tickExists

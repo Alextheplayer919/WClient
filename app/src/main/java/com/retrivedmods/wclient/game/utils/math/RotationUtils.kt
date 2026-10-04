@@ -1,8 +1,8 @@
 package com.retrivedmods.wclient.game.utils.math
 
 import com.retrivedmods.wclient.game.entity.Entity
+import com.retrivedmods.wclient.game.entity.LocalPlayer
 import org.cloudburstmc.math.vector.Vector3f
-import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -31,29 +31,31 @@ fun getAngleDifference(a: Float, b: Float) = ((a - b) % 360f + 540f) % 360f - 18
  * Shared rotation system for combat modules.
  *
  * Design rules:
- *  - Aiming is instant. A combat module never has its own rotation speed; it simply
- *    faces the target on the packet it is about to send.
- *  - Orbiting (strafing) around a target never has its own speed either. The angular
- *    step each tick is derived from how fast the player is actually moving, which is
- *    whatever the motion modules (Speed, Bhop, Fly, ...) produced. If the player is
- *    standing still, the orbit does not advance.
+ *  - Rotations are silent. Modules never send anything to the client; they only request a
+ *    rotation via [LocalPlayer.silentRotation], and GameSession swaps it into the outgoing
+ *    PlayerAuthInputPacket. The player's camera is untouched.
+ *  - Aiming is instant. A combat module never has its own rotation speed.
+ *  - Orbiting (strafing) around a target never has its own speed either. The angular step each
+ *    tick is derived from how fast the player is actually moving, which is whatever the motion
+ *    modules (Speed, Bhop, Fly, ...) produced. Standing still means the orbit does not advance.
  */
 object RotationUtils {
 
-    /** Rotation the local player must have to look at [target], packed as (pitch, yaw, headYaw). */
-    fun lookAt(player: Entity, target: Entity): Vector3f {
-        val rotation = toRotation(player.vec3Position, target.vec3Position)
+    /** Rotation needed to look from [from] at [to], packed as (pitch, yaw, headYaw). */
+    fun lookAt(from: Vector3f, to: Vector3f): Vector3f {
+        val rotation = toRotation(from, to)
         return Vector3f.from(rotation.pitch, rotation.yaw, rotation.yaw)
     }
 
+    fun lookAt(player: Entity, target: Entity): Vector3f = lookAt(player.vec3Position, target.vec3Position)
+
     /**
-     * Rewrites the outgoing [packet] so the server sees the player looking directly at [target].
-     * Also updates the local entity so later logic in the same tick sees the aimed rotation.
+     * Silently aims the server-side rotation at [point] for the current tick.
+     * Nothing is sent to the client.
      */
-    fun aim(packet: PlayerAuthInputPacket, player: Entity, target: Entity): Vector3f {
-        val rotation = lookAt(player, target)
-        packet.rotation = rotation
-        player.rotate(rotation)
+    fun aimSilently(player: LocalPlayer, point: Vector3f): Vector3f {
+        val rotation = lookAt(player.vec3Position, point)
+        player.silentRotation = rotation
         return rotation
     }
 
