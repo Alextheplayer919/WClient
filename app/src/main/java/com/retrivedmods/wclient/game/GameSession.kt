@@ -8,6 +8,7 @@ import com.retrivedmods.wclient.game.registry.BlockMappingProvider
 import com.retrivedmods.wclient.game.registry.ItemMapping
 import com.retrivedmods.wclient.game.registry.ItemMappingProvider
 import com.retrivedmods.wclient.game.world.Level
+import com.retrivedmods.wclient.game.utils.combat.ConsumeTracker
 import com.retrivedmods.wclient.game.utils.combat.HitTracker
 import com.retrivedmods.wclient.game.utils.combat.LatencyTracker
 import com.retrivedmods.wrelay.WRelaySession
@@ -31,6 +32,9 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
 
     /** Attack -> HURT feedback loop that auto-tunes the prediction offset. */
     val hitTracker = HitTracker(latency)
+
+    /** Tracks when the local player is eating/drinking (manual or server state). */
+    val consumeTracker = ConsumeTracker(this)
 
     val protocolVersion: Int
         get() = wRelaySession.server.codec.protocolVersion
@@ -115,6 +119,7 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
 
         if (latency.onPacket(packet)) return true
         hitTracker.onPacket(packet)
+        consumeTracker.onPacket(packet)
         if (packet is PlayerAuthInputPacket) latency.tick()
 
         val interceptablePacket = InterceptablePacket(packet, serverBound)
@@ -175,6 +180,7 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
         level.onDisconnect()
         latency.reset()
         hitTracker.reset()
+        consumeTracker.reset()
         startGameReceived = false
 
         for (module in ModuleManager.modules) {

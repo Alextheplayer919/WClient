@@ -1,5 +1,11 @@
 # AutoEat / AutoPot — Proxy-Level Design
 
+> **Status: IMPLEMENTED** — `ConsumeTracker` + `ConsumeLock`
+> (`game/utils/combat/`), `BaseConsumeModule` + `AutoEatModule` +
+> `AutoPotModule` (`game/module/combat/`). Every eat/drink shows a
+> client-only chat message via `session.displayClientMessage` (same
+> mechanism the `.command` replies use — the server never sees it).
+
 Every class/enum referenced below exists in the protocol library vendored in
 `relay/Protocol` (verified), so this is implementable with what WClient already ships.
 
