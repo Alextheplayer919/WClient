@@ -2,7 +2,6 @@ package com.retrivedmods.wclient.game
 
 import android.content.Context
 import android.net.Uri
-import android.os.Environment
 import com.retrivedmods.wclient.application.AppContext
 import com.retrivedmods.wclient.game.module.combat.ACAModule
 import com.retrivedmods.wclient.game.module.combat.AntiCrystalModule
@@ -14,8 +13,10 @@ import com.retrivedmods.wclient.game.module.combat.HitboxModule
 import com.retrivedmods.wclient.game.module.combat.KillauraModule
 import com.retrivedmods.wclient.game.module.combat.TriggerBotModule
 import com.retrivedmods.wclient.game.module.combat.WAuraModule
+import com.retrivedmods.wclient.game.module.combat.AutoEatModule
 import com.retrivedmods.wclient.game.module.combat.AutoFightModule
 import com.retrivedmods.wclient.game.module.combat.AutoHvHModule
+import com.retrivedmods.wclient.game.module.combat.AutoPotModule
 import com.retrivedmods.wclient.game.module.combat.AutoTotemModule
 import com.retrivedmods.wclient.game.module.combat.HotbarSwitcherModule
 import com.retrivedmods.wclient.game.module.combat.InfiniteAuraModule
@@ -97,6 +98,8 @@ object ModuleManager {
             add(InfiniteAuraModule())
             add(ACAModule())
             add(AutoTotemModule())
+            add(AutoEatModule())
+            add(AutoPotModule())
             add(AutoHvHModule())
             add(EnemyHunterModule())
             add(AntiKnockbackModule())
@@ -277,23 +280,10 @@ object ModuleManager {
 
     fun getWClientConfigsDirectory(): File? {
         return try {
-            val documentsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-
-            val baseDir = if (documentsDir.exists() || documentsDir.mkdirs()) {
-                documentsDir
-            } else {
-                downloadsDir
-            }
-
-            val wclientDir = File(baseDir, "WClient")
-            val configsDir = File(wclientDir, "configs")
-
-            if (configsDir.exists() || configsDir.mkdirs()) {
-                configsDir
-            } else {
-                null
-            }
+            // Single source of truth: the same directory the in-game profile
+            // system (ConfigManager) resolves, so exports and saved profiles
+            // always end up in one place.
+            com.retrivedmods.wclient.game.config.ConfigManager.configsDirectory
         } catch (e: Exception) {
             e.printStackTrace()
             null

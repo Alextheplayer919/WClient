@@ -4,6 +4,7 @@ import com.retrivedmods.wclient.game.GameSession
 import com.retrivedmods.wclient.game.inventory.AbstractInventory
 import com.retrivedmods.wclient.game.inventory.ContainerInventory
 import com.retrivedmods.wclient.game.inventory.PlayerInventory
+import com.retrivedmods.wclient.game.utils.combat.ConsumeLock
 import org.cloudburstmc.math.vector.Vector3f
 import org.cloudburstmc.protocol.bedrock.data.AuthoritativeMovementMode
 import org.cloudburstmc.protocol.bedrock.data.SoundEvent
@@ -123,6 +124,10 @@ class LocalPlayer(val session: GameSession) : Player(0L, 0L, UUID.randomUUID(), 
     }
 
     fun attack(entity: Entity) {
+        // Attacking during a consume makes the server cancel the eat/drink —
+        // hold module-driven swings while any consume (manual or automated) runs.
+        if (ConsumeLock.isBusy || session.consumeTracker.isUserConsuming) return
+
         swing()
 
         val inventoryTransactionPacket = InventoryTransactionPacket()
