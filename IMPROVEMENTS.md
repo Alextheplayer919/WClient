@@ -17,13 +17,17 @@ effects). An anarchy-grade AutoPot should:
   always knows the remaining duration of Strength, Fire Res, Regen, Speed.
 - **Re-pot before expiry**: configurable threshold (e.g. re-drink when < 5s of Strength II
   remain) instead of waiting for it to drop.
-- **Splash and drinkable support**: for splash pots, aim-down pitch spoof via
-  `PlayerAuthInputPacket` rotation + `InventoryTransactionPacket` (ITEM_USE) so the throw
-  lands at your feet mid-air; for drinkables, hold-use emulation.
-- **Silent switch**: hotbar-swap to the potion slot via `PlayerHotbarPacket`, use, swap
+- **Drinkable potions only** (standard anarchy loadout — nobody carries splash):
+  full hold-use emulation, i.e. the same start → hold ~31 ticks → consume packet
+  sequence as eating, so AutoPot and AutoEat share one consume implementation.
+- **Silent switch**: hotbar-swap to the potion slot via `MobEquipmentPacket`, drink, swap
   back — same trick `HotbarSwitcherModule` already does, so the scaffolding exists.
-- Options: `effects to maintain` (multi-select), `re-pot threshold (s)`, `splash/drink
-  mode`, `pause while eating`, `only in combat` (hook `PopCounter`/aura target state).
+- **Smart drink timing**: since a drink commits ~1.6 s, schedule it early (re-pot at
+  ~8–10 s remaining) and prefer lulls in the exchange, with a hard deadline so the
+  effect can never fully drop.
+- Options: `effects to maintain` (multi-select), `re-drink threshold (s)`,
+  `wait-for-lull + deadline`, `pause while eating`, `only in combat`
+  (hook `PopCounter`/aura target state).
 
 ### 1.2 AutoEat / GapKeeper (new module — currently missing)
 - **Keep Absorption up permanently**: watch the Absorption attribute

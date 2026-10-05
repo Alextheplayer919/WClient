@@ -77,21 +77,32 @@ Why the checkpoints matter: "send and pray" is what loses fights. Every step has
 server acknowledgement with a measured deadline (sized from `LatencyTracker`), one
 bounded retry, and a visible failure state instead of silent no-ops.
 
-### Splash potions (the anarchy-meta case)
+### Potions (drinkable — the realistic case)
 
-Splash strength/healing is **better** than drinking mid-fight because there is no
-1.6 s window at all:
+AutoPot uses **normal drinkable potions only** (nobody carries splash pots on
+anarchy). Drinking is the *exact same packet sequence as eating* — SELECT →
+START → HOLD ~31 ticks → CONSUME → RESTORE — so AutoPot and AutoEat share one
+`ConsumeSequence` implementation; the only differences are which item is picked
+and which confirmation effect is expected.
 
-```
-1. MobEquipmentPacket → splash pot slot (server-bound only)
-2. Set localPlayer.silentRotation = pitch 90° down   (already supported!)
-3. InventoryTransactionPacket ITEM_USE actionType 1 on the next input tick
-4. Restore slot
-```
+Because a drink commits you to a ~1.55 s use window, *when* to drink is the
+whole game:
 
-One tick, lands at your feet even while airborne. Confirmation = `MobEffectPacket`
-ADD for the expected effect; the effect-expiry timer (from the same packet's
-duration field) drives the "re-pot 5 s before Strength runs out" logic.
+- **Effect timers, not reactions**: every `MobEffectPacket` ADD carries the
+  duration, so the module always knows Strength has e.g. 14 s left. Re-potting
+  is scheduled **early** (configurable threshold, default ~8–10 s remaining)
+  instead of waiting for expiry — you drink during a gap in the exchange, never
+  while the effect has already dropped mid-trade.
+- **Safe-window gating**: optionally hold the drink while an aura target is in
+  hit range / while you're taking rapid hits, and fire it the moment there's a
+  lull — with a hard "drink anyway" deadline (e.g. 3 s left) so it can never be
+  postponed into losing the effect entirely.
+- **Lock priority still applies**: a totem re-equip or emergency gap aborts a
+  pending drink (abort = just don't send CONSUME; send a slot restore — the
+  sip is lost but the server state stays clean and the retry reschedules).
+
+Confirmation = `MobEffectPacket` ADD/UPDATE for the expected effect ID; that
+same packet refreshes the expiry timer that drives the next cycle.
 
 ### Fail-safes
 
@@ -113,8 +124,9 @@ duration field) drives the "re-pot 5 s before Strength runs out" logic.
 threshold (force-eat below N hearts), food priority (egap → gap → other), min
 hunger for normal food, "only in combat" toggle.
 
-**AutoPot**: effects to maintain (Strength / Fire Res / Regen / Speed), re-apply
-threshold in seconds before expiry, splash vs drink mode, "pause while user eats"
+**AutoPot** (drinkable potions): effects to maintain (Strength / Fire Res /
+Regen / Speed), re-drink threshold in seconds remaining (default ~8–10 s),
+"wait for a lull in combat" toggle + hard deadline, "pause while user eats"
 (always on, from the ConsumeTracker).
 
 Both share the item-use lock with AutoTotem — totem always wins.
