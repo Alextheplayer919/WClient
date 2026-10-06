@@ -207,7 +207,7 @@ object OverlayManager {
     private val hudWindows: List<OverlayWindow>
         get() = overlayWindows.filter { it.isHudElement }
 
-    fun setHudEditMode(enabled: Boolean) {
+    fun applyHudEditMode(enabled: Boolean) {
         if (isHudEditMode == enabled) return
         isHudEditMode = enabled
         applyHudTouchFlags()

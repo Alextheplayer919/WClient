@@ -63,7 +63,7 @@ class ArrayListOverlay : OverlayWindow() {
     private val _layoutParams by lazy {
         super.layoutParams.apply {
             // FLAG_NOT_TOUCHABLE keeps the list from eating touches while playing.
-            // HUD edit mode clears it (OverlayManager.setHudEditMode) so the list
+            // HUD edit mode clears it (OverlayManager.applyHudEditMode) so the list
             // can be dragged, and restores it on exit.
             flags = flags or
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or

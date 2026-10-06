@@ -8,7 +8,7 @@
 
 | Piece | Where | What it does |
 |-------|-------|--------------|
-| HUD edit mode flags + touch-flag toggling | `overlay/OverlayManager.kt` (`isHudEditMode`, `setHudEditMode`, `dismissClickGui`, `hudSnap*`, `hudGridSizePx`, `hudShowOutlines`, `hudShowLabels`) | Clears `FLAG_NOT_TOUCHABLE` on every window with `isHudElement = true` while editing, restores it on exit, and closes the ClickGUI (which otherwise swallows every touch). Reset in `dismiss()`. |
+| HUD edit mode flags + touch-flag toggling | `overlay/OverlayManager.kt` (`isHudEditMode`, `applyHudEditMode`, `dismissClickGui`, `hudSnap*`, `hudGridSizePx`, `hudShowOutlines`, `hudShowLabels`) | Clears `FLAG_NOT_TOUCHABLE` on every window with `isHudElement = true` while editing, restores it on exit, and closes the ClickGUI (which otherwise swallows every touch). Reset in `dismiss()`. |
 | Per-window hooks | `overlay/OverlayWindow.kt` (`open val isHudElement`, `var onHudMoved`) | Opt-in marker + write-back callback. |
 | Shared drag + outline | `overlay/hud/HudDrag.kt` (`HudDrag.drag/snap`, `HudEditBox`) | Gravity-aware drag (`END`/`BOTTOM` mirror the delta, `CENTER_*` use signed offsets), on-screen clamping, edge snap, optional grid, red outline + name chip. Pass-through `Box` when not editing. |
 | **HUD Editor module** | `game/module/misc/HudEditorModule.kt` (`hud_editor`, Misc) | Toggle = edit mode. Values: Snap To Edges, Snap Distance, Grid Size, Show Outlines, Show Labels, Save Layout On Exit. Shows the Target HUD sample card while editing (only if Target HUD is on). `toJson`/`fromJson` force `state=false` so edit mode never survives a restart. Tip: tick its **Shortcut** box for a floating exit button. |
@@ -129,7 +129,7 @@ This is what basically every client does, and it fits this codebase cleanly.
 
 1. Add a header button in `OverlayClickGUI.HeaderBar()` (next to Discord/Website/Close, `:167-201`)
    labelled **HUD** / **Layout**.
-2. Clicking it: `OverlayManager.dismissOverlayWindow(clickGUI)` then `OverlayManager.setHudEditMode(true)`.
+2. Clicking it: `OverlayManager.dismissOverlayWindow(clickGUI)` then `OverlayManager.applyHudEditMode(true)`.
 3. `OverlayManager` already tracks every live window in `overlayWindows` (`:25`, `:74-80`) — add:
 
 ```kotlin
@@ -140,7 +140,7 @@ var isHudEditMode by mutableStateOf(false)
 private val editableHudWindows
     get() = overlayWindows.filter { it is HudOverlayWindow }   // marker interface / open val
 
-fun setHudEditMode(enabled: Boolean) {
+fun applyHudEditMode(enabled: Boolean) {
     isHudEditMode = enabled
     val wm = currentContext?.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
     editableHudWindows.forEach { win ->
@@ -406,7 +406,7 @@ when the longest enabled module changes — which is the behaviour you described
 | 3 | Reverse/ascending order + alignment/border flip + auto-anchor (§4) | same two files | 1–2 h |
 | 4 | `key()` + `AnimatedVisibility` cleanup for smooth reordering | `ArrayListOverlay.kt` | 30 min |
 | 5 | `ResourceHudModule` + `ResourceHudOverlay` (totems / strength pots / gaps / timer), draggable + persisted | 2 new files, `ModuleManager.kt` | 2–4 h |
-| 6 | `HudOverlayWindow` base + `OverlayManager.setHudEditMode()` + "HUD Layout" button in the ClickGUI header + Done button + snap/guides | `OverlayWindow.kt`/new base, `OverlayManager.kt`, `OverlayClickGUI.kt`, all 8 HUD overlays | ½ day |
+| 6 | `HudOverlayWindow` base + `OverlayManager.applyHudEditMode()` + "HUD Layout" button in the ClickGUI header + Done button + snap/guides | `OverlayWindow.kt`/new base, `OverlayManager.kt`, `OverlayClickGUI.kt`, all 8 HUD overlays | ½ day |
 | 7 | (optional) Layout tab with proxy drag (§2.3) | `OverlayClickGUI.kt` + new screen | ½ day |
 
 Steps 1–4 are self-contained and immediately visible. Step 6 is what makes dragging a *first-class*

@@ -49,7 +49,7 @@ class HudEditorModule : Module("hud_editor", ModuleCategory.Misc) {
     override fun onEnabled() {
         super.onEnabled()
         applySettings()
-        OverlayManager.setHudEditMode(true)
+        OverlayManager.applyHudEditMode(true)
         OverlayManager.dismissClickGui()
         showTargetHudPreview()
 
@@ -70,7 +70,7 @@ class HudEditorModule : Module("hud_editor", ModuleCategory.Misc) {
         scope?.cancel()
         scope = null
         TargetHudOverlay.hidePreview()
-        OverlayManager.setHudEditMode(false)
+        OverlayManager.applyHudEditMode(false)
         if (saveOnExit) saveLayout()
     }
 
@@ -78,7 +78,7 @@ class HudEditorModule : Module("hud_editor", ModuleCategory.Misc) {
         scope?.cancel()
         scope = null
         TargetHudOverlay.hidePreview()
-        OverlayManager.setHudEditMode(false)
+        OverlayManager.applyHudEditMode(false)
     }
 
     /**

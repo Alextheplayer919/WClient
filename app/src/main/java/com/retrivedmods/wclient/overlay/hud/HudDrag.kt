@@ -27,7 +27,7 @@ private val EditLabelBackground = Color(0xCC0A0A0A)
  * Shared click-to-drag support for HUD overlay windows.
  *
  * HUD windows carry `FLAG_NOT_TOUCHABLE` during normal play so they never steal
- * touches from Minecraft. [OverlayManager.setHudEditMode] clears that flag while
+ * touches from Minecraft. [OverlayManager.applyHudEditMode] clears that flag while
  * the HUD Editor module is enabled — the only time these gestures can run.
  *
  * Offsets in `WindowManager.LayoutParams` are relative to the window's `gravity`,

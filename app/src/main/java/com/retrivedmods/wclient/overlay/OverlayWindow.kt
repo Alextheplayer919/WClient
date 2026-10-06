@@ -31,7 +31,7 @@ abstract class OverlayWindow {
      * be repositioned by dragging while the HUD Editor module is enabled.
      *
      * HUD windows are `FLAG_NOT_TOUCHABLE` during normal play so they never steal
-     * touches from Minecraft; [OverlayManager.setHudEditMode] clears that flag for
+     * touches from Minecraft; [OverlayManager.applyHudEditMode] clears that flag for
      * every window that reports `true` here, and restores it on exit.
      */
     open val isHudElement: Boolean = false
