@@ -175,6 +175,8 @@ class OverlayClickGUI : OverlayWindow() {
                         .align(Alignment.BottomCenter)
                         .padding(16.dp)
                 ) { data ->
+                    // Content overload: no icon, no action (none of our messages
+                    // set an actionLabel), flat dark card in the client palette.
                     Snackbar(
                         modifier = Modifier.border(
                             1.dp,
@@ -184,8 +186,7 @@ class OverlayClickGUI : OverlayWindow() {
                         shape = RoundedCornerShape(8.dp),
                         containerColor = SnackbarBackground,
                         contentColor = if (snackbarError) SnackbarError else TextPrimary,
-                        actionColor = AccentPrimary,
-                        elevation = 0.dp
+                        actionContentColor = AccentPrimary
                     ) {
                         Text(
                             text = data.visuals.message,
