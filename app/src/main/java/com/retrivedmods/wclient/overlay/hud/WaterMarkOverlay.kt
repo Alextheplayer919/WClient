@@ -4,7 +4,6 @@ import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -14,7 +13,6 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -34,20 +32,25 @@ class WaterMarkOverlay : OverlayWindow() {
 
     private val _layoutParams by lazy {
         super.layoutParams.apply {
+            // Untouchable while playing: the watermark must never eat a touch that
+            // was meant for Minecraft. HUD edit mode clears the flag.
             flags = flags or
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
             width = WindowManager.LayoutParams.WRAP_CONTENT
             height = WindowManager.LayoutParams.WRAP_CONTENT
             gravity = Gravity.TOP or Gravity.START
-            x = 20
-            y = 20
+            x = DEFAULT_OFFSET
+            y = DEFAULT_OFFSET
         }
     }
 
     override val layoutParams: WindowManager.LayoutParams
         get() = _layoutParams
+
+    override val isHudElement: Boolean = true
 
     private var customText by mutableStateOf("WClient")
     private var showVersion by mutableStateOf(true)
@@ -56,9 +59,28 @@ class WaterMarkOverlay : OverlayWindow() {
     private var mode by mutableStateOf(WaterMarkModule.WatermarkMode.RGB)
     private var fontStyle by mutableStateOf(WaterMarkModule.FontStyle.MINECRAFT)
 
+    /** Offset from the anchor chosen by [position], in layout-params pixels. */
+    private var offsetX by mutableStateOf(DEFAULT_OFFSET)
+    private var offsetY by mutableStateOf(DEFAULT_OFFSET)
+
+    init {
+        // Drag write-back: keep the local state and the module values in sync so
+        // the layout survives a restart / config switch.
+        onHudMoved = { x, y ->
+            offsetX = x
+            offsetY = y
+            onPositionChanged?.invoke(position, x, y)
+        }
+    }
+
     companion object {
+        private const val DEFAULT_OFFSET = 20
+
         val overlayInstance by lazy { WaterMarkOverlay() }
         private var shouldShowOverlay = false
+
+        /** Called after a drag so WaterMarkModule can persist the new offset. */
+        var onPositionChanged: ((WaterMarkModule.Position, Int, Int) -> Unit)? = null
 
         fun setOverlayEnabled(enabled: Boolean) {
             shouldShowOverlay = enabled
@@ -78,9 +100,13 @@ class WaterMarkOverlay : OverlayWindow() {
             overlayInstance.showVersion = show
         }
 
-        fun setPosition(pos: WaterMarkModule.Position) {
-            overlayInstance.position = pos
-            overlayInstance.updateLayoutParams()
+        fun setPosition(pos: WaterMarkModule.Position, x: Int, y: Int) {
+            val instance = overlayInstance
+            if (instance.position == pos && instance.offsetX == x && instance.offsetY == y) return
+            instance.position = pos
+            instance.offsetX = x
+            instance.offsetY = y
+            instance.updateLayoutParams()
         }
 
         fun setFontSize(size: Int) {
@@ -97,6 +123,8 @@ class WaterMarkOverlay : OverlayWindow() {
     }
 
     private fun updateLayoutParams() {
+        _layoutParams.x = offsetX
+        _layoutParams.y = offsetY
         _layoutParams.gravity = when (position) {
             WaterMarkModule.Position.TOP_LEFT -> Gravity.TOP or Gravity.START
             WaterMarkModule.Position.TOP_CENTER -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
@@ -127,18 +155,7 @@ class WaterMarkOverlay : OverlayWindow() {
             }
         }
 
-        Box(
-            modifier = Modifier
-                .pointerInput(Unit) {
-                    detectDragGestures { _, drag ->
-                        _layoutParams.x += drag.x.toInt()
-                        _layoutParams.y += drag.y.toInt()
-                        try {
-                            windowManager.updateViewLayout(composeView, _layoutParams)
-                        } catch (_: Exception) {}
-                    }
-                }
-        ) {
+        HudEditBox(window = this, label = "Watermark") {
             when (mode) {
                 WaterMarkModule.WatermarkMode.RGB -> RGBWatermark(time)
             }

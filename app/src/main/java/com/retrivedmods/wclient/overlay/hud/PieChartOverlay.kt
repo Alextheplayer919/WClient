@@ -7,7 +7,6 @@ import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,7 +29,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,9 +40,12 @@ class PieChartOverlay : OverlayWindow() {
 
     private val _layoutParams by lazy {
         super.layoutParams.apply {
+            // Untouchable while playing; HUD edit mode clears the flag so the
+            // chart can be dragged.
             flags = flags or
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
             width = WindowManager.LayoutParams.WRAP_CONTENT
             height = WindowManager.LayoutParams.WRAP_CONTENT
@@ -56,6 +57,12 @@ class PieChartOverlay : OverlayWindow() {
 
     override val layoutParams: WindowManager.LayoutParams
         get() = _layoutParams
+
+    override val isHudElement: Boolean = true
+
+    init {
+        onHudMoved = { x, y -> onPositionChanged?.invoke(x, y) }
+    }
 
     private var performanceData by mutableStateOf(mapOf<String, Long>())
     private var chartSize by mutableStateOf(140)
@@ -87,6 +94,9 @@ class PieChartOverlay : OverlayWindow() {
     companion object {
         val overlayInstance by lazy { PieChartOverlay() }
         private var shouldShowOverlay = false
+
+        /** Called after a drag in HUD edit mode so the module can persist x/y. */
+        var onPositionChanged: ((Int, Int) -> Unit)? = null
 
         fun showOverlay() {
             if (shouldShowOverlay) {
@@ -168,8 +178,16 @@ class PieChartOverlay : OverlayWindow() {
         }
 
         fun setPosition(x: Int, y: Int) {
-            overlayInstance._layoutParams.x = x
-            overlayInstance._layoutParams.y = y
+            val instance = overlayInstance
+            if (instance._layoutParams.x == x && instance._layoutParams.y == y) return
+            instance._layoutParams.x = x
+            instance._layoutParams.y = y
+            // The window may already be attached: without this the new offsets
+            // would only apply the next time the overlay is shown.
+            try {
+                instance.windowManager.updateViewLayout(instance.composeView, instance._layoutParams)
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -185,24 +203,21 @@ class PieChartOverlay : OverlayWindow() {
             }
         }
 
-        PieChartContent(
-            performanceData = performanceData,
-            chartSize = chartSize,
-            showPercentages = showPercentages,
-            showLabels = showLabels,
-            transparentBackground = transparentBackground,
-            highlightLargest = highlightLargest,
-            chart3DDepth = chart3DDepth,
-            chartTilt = chartTilt,
-            borderWidth = borderWidth,
-            legendSpacing = legendSpacing,
-            legendFontSize = legendFontSize,
-
-            colorIntensity = colorIntensity
-        ) { dx, dy ->
-            _layoutParams.x += dx.toInt()
-            _layoutParams.y -= dy.toInt()
-            windowManager.updateViewLayout(composeView, _layoutParams)
+        HudEditBox(window = this, label = "Pie Chart") {
+            PieChartContent(
+                performanceData = performanceData,
+                chartSize = chartSize,
+                showPercentages = showPercentages,
+                showLabels = showLabels,
+                transparentBackground = transparentBackground,
+                highlightLargest = highlightLargest,
+                chart3DDepth = chart3DDepth,
+                chartTilt = chartTilt,
+                borderWidth = borderWidth,
+                legendSpacing = legendSpacing,
+                legendFontSize = legendFontSize,
+                colorIntensity = colorIntensity
+            )
         }
     }
 
@@ -221,8 +236,7 @@ class PieChartOverlay : OverlayWindow() {
         legendSpacing: Int,
         legendFontSize: Int,
 
-        colorIntensity: Float,
-        onDrag: (Float, Float) -> Unit
+        colorIntensity: Float
     ) {
         val totalTime = performanceData.values.sum()
         if (totalTime == 0L) return
@@ -233,11 +247,6 @@ class PieChartOverlay : OverlayWindow() {
         Box(
             modifier = Modifier
                 .wrapContentSize()
-                .pointerInput(Unit) {
-                    detectDragGestures { _, drag ->
-                        onDrag(drag.x, drag.y)
-                    }
-                }
         ) {
             Row(
                 modifier = Modifier.wrapContentSize(),

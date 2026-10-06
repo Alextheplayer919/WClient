@@ -40,8 +40,10 @@ class PieChartModule : Module("PieChart", ModuleCategory.Misc) {
     private val legendFontSize by intValue("Legend Font Size", 11, 8..16)
 
     private val colorIntensity by floatValue("Color Intensity", 1.0f, 0.5f..1.5f)
-    private val positionX by intValue("Position X", 20, -200..200)
-    private val positionY by intValue("Position Y", 100, 50..500)
+    // Screen pixels from the bottom-left anchor. Dragged positions are written
+    // back here by the overlay in HUD edit mode.
+    private var positionX by intValue("Position X", 20, 0..2000)
+    private var positionY by intValue("Position Y", 100, 0..2000)
 
     private var lastUpdateTime = 0L
     private val performanceData = mutableMapOf<String, Long>()
@@ -60,6 +62,10 @@ class PieChartModule : Module("PieChart", ModuleCategory.Misc) {
 
     override fun onEnabled() {
         super.onEnabled()
+        PieChartOverlay.onPositionChanged = { x, y ->
+            if (positionX != x) positionX = x
+            if (positionY != y) positionY = y
+        }
         try {
             if (isSessionCreated) {
                 PieChartOverlay.setOverlayEnabled(true)
@@ -74,6 +80,7 @@ class PieChartModule : Module("PieChart", ModuleCategory.Misc) {
 
     override fun onDisabled() {
         super.onDisabled()
+        PieChartOverlay.onPositionChanged = null
         if (isSessionCreated) {
             PieChartOverlay.setOverlayEnabled(false)
             resetCounters()
@@ -81,6 +88,7 @@ class PieChartModule : Module("PieChart", ModuleCategory.Misc) {
     }
 
     override fun onDisconnect(reason: String) {
+        PieChartOverlay.onPositionChanged = null
         if (isSessionCreated) {
             PieChartOverlay.setOverlayEnabled(false)
             resetCounters()
@@ -114,6 +122,8 @@ class PieChartModule : Module("PieChart", ModuleCategory.Misc) {
                 
                 if (currentTime - lastUpdateTime >= updateRate) {
                     updatePerformanceData()
+                    // Cheap no-op unless the sliders (or a drag) changed something.
+                    PieChartOverlay.setPosition(positionX, positionY)
                     lastUpdateTime = currentTime
                 }
                 

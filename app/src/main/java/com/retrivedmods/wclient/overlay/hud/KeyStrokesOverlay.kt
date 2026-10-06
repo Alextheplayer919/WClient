@@ -8,7 +8,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,7 +29,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -43,9 +41,12 @@ class KeyStrokesOverlay : OverlayWindow() {
 
     private val _layoutParams by lazy {
         super.layoutParams.apply {
+            // Untouchable while playing (it used to swallow touches over the keys);
+            // HUD edit mode clears the flag so it can be dragged.
             flags = flags or
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
             width = WindowManager.LayoutParams.WRAP_CONTENT
             height = WindowManager.LayoutParams.WRAP_CONTENT
@@ -56,6 +57,12 @@ class KeyStrokesOverlay : OverlayWindow() {
 
     override val layoutParams: WindowManager.LayoutParams
         get() = _layoutParams
+
+    override val isHudElement: Boolean = true
+
+    init {
+        onHudMoved = { x, y -> onPositionChanged?.invoke(x, y) }
+    }
 
     private var keyStates by mutableStateOf(
         mapOf(
@@ -80,6 +87,9 @@ class KeyStrokesOverlay : OverlayWindow() {
     companion object {
         val overlayInstance by lazy { KeyStrokesOverlay() }
         private var shouldShowOverlay = false
+
+        /** Called after a drag in HUD edit mode so the module can persist x/y. */
+        var onPositionChanged: ((Int, Int) -> Unit)? = null
 
         fun showOverlay() {
             if (shouldShowOverlay) {
@@ -115,8 +125,16 @@ class KeyStrokesOverlay : OverlayWindow() {
         }
 
         fun setPosition(x: Int, y: Int) {
-            overlayInstance._layoutParams.x = x
-            overlayInstance._layoutParams.y = y
+            val instance = overlayInstance
+            if (instance._layoutParams.x == x && instance._layoutParams.y == y) return
+            instance._layoutParams.x = x
+            instance._layoutParams.y = y
+            // The window may already be attached: without this the new offsets
+            // would only apply the next time the overlay is shown.
+            try {
+                instance.windowManager.updateViewLayout(instance.composeView, instance._layoutParams)
+            } catch (_: Exception) {
+            }
         }
 
         fun setKeySize(size: Int) {
@@ -168,26 +186,18 @@ class KeyStrokesOverlay : OverlayWindow() {
             windowManager.updateViewLayout(composeView, _layoutParams)
         }
 
-        KeyStrokesContent(keyStates = keyStates) { dx, dy ->
-            _layoutParams.x += dx.toInt()
-            _layoutParams.y += dy.toInt()
-            windowManager.updateViewLayout(composeView, _layoutParams)
+        HudEditBox(window = this, label = "Keystrokes") {
+            KeyStrokesContent(keyStates = keyStates)
         }
     }
 
     @Composable
     private fun KeyStrokesContent(
-        keyStates: Map<String, Boolean>,
-        onDrag: (Float, Float) -> Unit
+        keyStates: Map<String, Boolean>
     ) {
         Box(
             modifier = Modifier
                 .wrapContentSize()
-                .pointerInput(Unit) {
-                    detectDragGestures { _, drag ->
-                        onDrag(drag.x, drag.y)
-                    }
-                }
         ) {
             Column(
                 modifier = Modifier.wrapContentSize(),

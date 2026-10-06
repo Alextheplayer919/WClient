@@ -28,11 +28,13 @@ import com.retrivedmods.wclient.game.module.visual.CoordinatesModule
 import com.retrivedmods.wclient.game.module.misc.DesyncModule
 import com.retrivedmods.wclient.game.module.misc.FakeDeathModule
 import com.retrivedmods.wclient.game.module.misc.FakeXPModule
+import com.retrivedmods.wclient.game.module.misc.HudEditorModule
 import com.retrivedmods.wclient.game.module.misc.MinerModule
 import com.retrivedmods.wclient.game.module.misc.NoChatModule
 import com.retrivedmods.wclient.game.module.misc.PieChartModule
 import com.retrivedmods.wclient.game.module.misc.PositionLoggerModule
 import com.retrivedmods.wclient.game.module.misc.ReplayModule
+import com.retrivedmods.wclient.game.module.misc.ResourceHudModule
 import com.retrivedmods.wclient.game.module.misc.ChestStealerModule
 import com.retrivedmods.wclient.game.module.misc.PopCounterModule
 import com.retrivedmods.wclient.game.module.misc.ChatSuffixModule
@@ -160,6 +162,8 @@ object ModuleManager {
             add(PopCounterModule())
             add(ChatSuffixModule())
             add(WaterMarkModule())
+            add(ResourceHudModule())
+            add(HudEditorModule())
             add(PositionLoggerModule())
             add(NoChatModule())
             add(CommandHandlerModule())

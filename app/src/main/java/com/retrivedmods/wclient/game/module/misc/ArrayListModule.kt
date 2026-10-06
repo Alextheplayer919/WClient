@@ -16,10 +16,23 @@ class ArrayListModule : Module("arraylist", ModuleCategory.Misc) {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val sortMode by enumValue("Sort", SortMode.LENGTH, SortMode::class.java)
+    private val orderDirection by enumValue(
+        "Order Direction",
+        OrderDirection.AUTO,
+        OrderDirection::class.java
+    )
+
+    // Layout. The list is anchored to a screen corner and offset from it, which is
+    // what makes AUTO ordering work: bottom corners put the longest name last.
+    // Dragged in HUD edit mode; both values are written back by the overlay.
+    private var position by enumValue("Position", Position.TOP_RIGHT, Position::class.java)
+    private var offsetX by intValue("Offset X", 20, 0..2000)
+    private var offsetY by intValue("Offset Y", 20, 0..2000)
+
     private val animationSpeed by intValue("Animation Speed", 300, 100..1000)
     private val showBackground by boolValue("Background", true)
     private val showBorder by boolValue("Border", true)
-    private val borderStyle by enumValue("Border Style", BorderStyle.LEFT, BorderStyle::class.java)
+    private val borderStyle by enumValue("Border Style", BorderStyle.AUTO, BorderStyle::class.java)
     private val colorMode by enumValue("Color Mode", ColorMode.SMOOTH_GRADIENT, ColorMode::class.java)
     private val rainbowSpeed by floatValue("Rainbow Speed", 1.0f, 0.1f..5.0f)
     private val fontSize by intValue("Font Size", 14, 8..24)
@@ -36,6 +49,12 @@ class ArrayListModule : Module("arraylist", ModuleCategory.Misc) {
 
     override fun onEnabled() {
         super.onEnabled()
+        // Persist whatever HUD edit mode drags the list to (corner + offsets).
+        ArrayListOverlay.onPositionChanged = { newPosition, x, y ->
+            if (position != newPosition) position = newPosition
+            if (offsetX != x) offsetX = x
+            if (offsetY != y) offsetY = y
+        }
         try {
             if (isSessionCreated) {
                 ArrayListOverlay.setOverlayEnabled(true)
@@ -49,6 +68,7 @@ class ArrayListModule : Module("arraylist", ModuleCategory.Misc) {
 
     override fun onDisabled() {
         super.onDisabled()
+        ArrayListOverlay.onPositionChanged = null
         if (isSessionCreated) {
             ArrayListOverlay.setOverlayEnabled(false)
         }
@@ -62,6 +82,8 @@ class ArrayListModule : Module("arraylist", ModuleCategory.Misc) {
 
     private fun updateSettings() {
         ArrayListOverlay.setSortMode(sortMode)
+        ArrayListOverlay.setOrderDirection(orderDirection)
+        ArrayListOverlay.setPosition(position, offsetX, offsetY)
         ArrayListOverlay.setAnimationSpeed(animationSpeed)
         ArrayListOverlay.setShowBackground(showBackground)
         ArrayListOverlay.setShowBorder(showBorder)
@@ -139,7 +161,25 @@ class ArrayListModule : Module("arraylist", ModuleCategory.Misc) {
         LENGTH, ALPHABETICAL, CATEGORY, CUSTOM
     }
 
+    /**
+     * Which end of the list sits nearest the anchor.
+     *
+     * AUTO follows the corner: top anchors keep the natural order (longest name on
+     * top), bottom anchors reverse it so the longest name is at the bottom and the
+     * shortest at the top — the staircase look when the list is parked in a corner.
+     */
+    enum class OrderDirection {
+        AUTO, NORMAL, REVERSED
+    }
+
+    /** Screen corner the list is anchored to. */
+    enum class Position {
+        TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT
+    }
+
     enum class BorderStyle {
+        /** Mirrors with the anchor: inner edge on the right, outer on the left. */
+        AUTO,
         LEFT, RIGHT, TOP, BOTTOM, FULL, NONE
     }
 

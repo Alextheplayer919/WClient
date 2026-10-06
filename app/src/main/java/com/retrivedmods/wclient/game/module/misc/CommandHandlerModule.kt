@@ -127,7 +127,7 @@ class CommandHandlerModule : Module("command_handler", ModuleCategory.Misc, true
         modules.chunked(3).forEach { row ->
             session.displayClientMessage(
                 row.joinToString("   ") {
-                    val s = if (it.isEnabled) "§a✔" else "§c✘"
+                    val s = if (it.isEnabled) "§a[ON]" else "§c[OFF]"
                     "$s §f${it.name}"
                 }
             )

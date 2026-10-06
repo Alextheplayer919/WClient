@@ -22,8 +22,10 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
     private val mobsOnly by boolValue("Mobs Only", false)
     private val rangeValue by floatValue("Range", 20f, 1f..20f)
     private val maxDistance by floatValue("Max Distance", 50f, 10f..100f)
-    private val positionX by intValue("Position X", 0, -500..500)
-    private val positionY by intValue("Position Y", -200, -500..500)
+    // Signed offsets from the centre of the screen. Written back by the overlay
+    // when the card is dragged in HUD edit mode.
+    private var positionX by intValue("Position X", 0, -2000..2000)
+    private var positionY by intValue("Position Y", -200, -2000..2000)
     private val scale by floatValue("Scale", 1.0f, 0.5f..2.0f)
     private val showDistance by boolValue("Show Distance", true)
     private val showStatus by boolValue("Show Status", true)
@@ -31,6 +33,10 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
 
     override fun onEnabled() {
         super.onEnabled()
+        TargetHudOverlay.onPositionChanged = { x, y ->
+            if (positionX != x) positionX = x
+            if (positionY != y) positionY = y
+        }
         scope.launch {
             updateOverlaySettings()
         }
@@ -49,9 +55,11 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
 
     override fun onDisabled() {
         super.onDisabled()
+        TargetHudOverlay.onPositionChanged = null
         if (isSessionCreated) {
             scope.launch {
                 try {
+                    TargetHudOverlay.hidePreview()
                     TargetHudOverlay.dismissTargetHud()
                 } catch (_: Exception) {
                 }

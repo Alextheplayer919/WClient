@@ -16,6 +16,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -67,6 +69,12 @@ private val TextPrimary = Color(0xFFE8E8E8)
 private val TextSecondary = Color(0xFFB0B0B0)
 private val ButtonBackground = Color(0xFF251A1A)
 
+// Status popup ("Saved config …") — same near-black surface as the rest of the
+// GUI, hairline border, no icons/emoji. Errors only change the text colour.
+private val SnackbarBackground = Color(0xFF0F0A0A)
+private val SnackbarBorder = Color(0xFF3A2222)
+private val SnackbarError = Color(0xFFCF222E)
+
 class OverlayClickGUI : OverlayWindow() {
 
     // The ClickGUI hosts text fields (e.g. Chat Suffix). Make it focusable so
@@ -95,6 +103,7 @@ class OverlayClickGUI : OverlayWindow() {
     override fun Content() {
         val context = LocalContext.current
         val snackbarHostState = remember { SnackbarHostState() }
+        var snackbarError by remember { mutableStateOf(false) }
 
         // Since the ClickGUI is now focusable to allow keyboard input, the
         // Activity behind us no longer sees the back key. Handle it here so
@@ -154,7 +163,10 @@ class OverlayClickGUI : OverlayWindow() {
                         },
                         onClose = { OverlayManager.dismissOverlayWindow(this@OverlayClickGUI) }
                     )
-                    MainArea(snackbarHostState)
+                    MainArea(
+                        snackbarHostState = snackbarHostState,
+                        onSnackbarTone = { snackbarError = it }
+                    )
                 }
 
                 SnackbarHost(
@@ -162,7 +174,29 @@ class OverlayClickGUI : OverlayWindow() {
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(16.dp)
-                )
+                ) { data ->
+                    Snackbar(
+                        modifier = Modifier.border(
+                            1.dp,
+                            SnackbarBorder,
+                            RoundedCornerShape(8.dp)
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        containerColor = SnackbarBackground,
+                        contentColor = if (snackbarError) SnackbarError else TextPrimary,
+                        actionColor = AccentPrimary,
+                        elevation = 0.dp
+                    ) {
+                        Text(
+                            text = data.visuals.message,
+                            color = if (snackbarError) SnackbarError else TextPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
         }
     }
@@ -223,7 +257,10 @@ class OverlayClickGUI : OverlayWindow() {
 
     @OptIn(ExperimentalAnimationApi::class)
     @Composable
-    private fun MainArea(snackbarHostState: SnackbarHostState) {
+    private fun MainArea(
+        snackbarHostState: SnackbarHostState,
+        onSnackbarTone: (Boolean) -> Unit
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
@@ -246,7 +283,10 @@ class OverlayClickGUI : OverlayWindow() {
                     label = "CategoryContent"
                 ) { category ->
                     if (category == ModuleCategory.Config) {
-                        ConfigurationScreen(snackbarHostState = snackbarHostState)
+                        ConfigurationScreen(
+                            snackbarHostState = snackbarHostState,
+                            onToneChange = onSnackbarTone
+                        )
                     } else {
                         ModuleContent(category)
                     }

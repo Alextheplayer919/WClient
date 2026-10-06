@@ -21,7 +21,11 @@ class CoordinatesModule : Module("Coordinates", ModuleCategory.Visual) {
     private val showDimension by boolValue("Show Dimension", true)
     private val showSpeed by boolValue("Show Speed", false)
     private val showNetherCoords by boolValue("Show Nether Coords", true)
-    private val position by enumValue("Position", Position.TOP_LEFT, Position::class.java)
+    private var position by enumValue("Position", Position.TOP_LEFT, Position::class.java)
+    // Signed because the CENTER_* anchors measure Y from the middle of the screen.
+    // Written back by the overlay when the element is dragged in HUD edit mode.
+    private var offsetX by intValue("Offset X", 20, -2000..2000)
+    private var offsetY by intValue("Offset Y", 120, -2000..2000)
     private val fontSize by intValue("Font Size", 14, 10..24)
     private val colorMode by enumValue("Color Mode", ColorMode.STATIC, ColorMode::class.java)
     private val showBackground by boolValue("Background", true)
@@ -39,6 +43,11 @@ class CoordinatesModule : Module("Coordinates", ModuleCategory.Visual) {
 
     override fun onEnabled() {
         super.onEnabled()
+        CoordinatesOverlay.onPositionChanged = { newPosition, x, y ->
+            if (position != newPosition) position = newPosition
+            if (offsetX != x) offsetX = x
+            if (offsetY != y) offsetY = y
+        }
         try {
             if (isSessionCreated) {
                 CoordinatesOverlay.Companion.setOverlayEnabled(true)
@@ -52,12 +61,14 @@ class CoordinatesModule : Module("Coordinates", ModuleCategory.Visual) {
 
     override fun onDisabled() {
         super.onDisabled()
+        CoordinatesOverlay.onPositionChanged = null
         if (isSessionCreated) {
             CoordinatesOverlay.Companion.setOverlayEnabled(false)
         }
     }
 
     override fun onDisconnect(reason: String) {
+        CoordinatesOverlay.onPositionChanged = null
         if (isSessionCreated) {
             CoordinatesOverlay.Companion.setOverlayEnabled(false)
         }
@@ -69,7 +80,7 @@ class CoordinatesModule : Module("Coordinates", ModuleCategory.Visual) {
         CoordinatesOverlay.Companion.setShowDimension(showDimension)
         CoordinatesOverlay.Companion.setShowSpeed(showSpeed)
         CoordinatesOverlay.Companion.setShowNetherCoords(showNetherCoords)
-        CoordinatesOverlay.Companion.setPosition(position)
+        CoordinatesOverlay.Companion.setPosition(position, offsetX, offsetY)
         CoordinatesOverlay.Companion.setFontSize(fontSize)
         CoordinatesOverlay.Companion.setColorMode(colorMode)
         CoordinatesOverlay.Companion.setShowBackground(showBackground)

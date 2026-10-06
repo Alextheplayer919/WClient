@@ -53,9 +53,21 @@ class TargetHudOverlay : OverlayWindow() {
     override val layoutParams: WindowManager.LayoutParams
         get() = _layoutParams
 
+    override val isHudElement: Boolean = true
+
+    init {
+        onHudMoved = { x, y -> onPositionChanged?.invoke(x, y) }
+    }
+
     companion object {
         private val overlayInstance by lazy { TargetHudOverlay() }
         private var isVisible = false
+
+        /** True while HUD edit mode is showing the sample target. */
+        private var previewActive = false
+
+        /** Called after a drag in HUD edit mode so the module can persist x/y. */
+        var onPositionChanged: ((Int, Int) -> Unit)? = null
 
         private var targetUsername by mutableStateOf("")
         private var targetImage by mutableStateOf<Bitmap?>(null)
@@ -167,6 +179,8 @@ class TargetHudOverlay : OverlayWindow() {
         }
 
         fun dismissTargetHud() {
+            // Keep the sample target on screen while the layout is being edited.
+            if (previewActive) return
             isVisible = false
             try {
                 OverlayManager.dismissOverlayWindow(overlayInstance)
@@ -174,11 +188,39 @@ class TargetHudOverlay : OverlayWindow() {
             }
         }
 
+        /**
+         * HUD edit mode: the window normally only exists while a target is being
+         * tracked, so show a sample card that can be dragged into place.
+         */
+        fun showPreview() {
+            previewActive = true
+            showTargetHud(
+                username = "Target",
+                skin = null,
+                distance = 3.2f,
+                maxDistance = 50f,
+                hurtTime = 0f
+            )
+        }
+
+        fun hidePreview() {
+            if (!previewActive) return
+            previewActive = false
+            dismissTargetHud()
+        }
+
         fun isTargetHudVisible(): Boolean = isVisible
 
         fun setPosition(x: Int, y: Int) {
-            overlayInstance._layoutParams.x = x
-            overlayInstance._layoutParams.y = y
+            val instance = overlayInstance
+            if (instance._layoutParams.x == x && instance._layoutParams.y == y) return
+            instance._layoutParams.x = x
+            instance._layoutParams.y = y
+            // Apply immediately if the window is already attached.
+            try {
+                instance.windowManager.updateViewLayout(instance.composeView, instance._layoutParams)
+            } catch (_: Exception) {
+            }
         }
 
         fun setScale(scale: Float) {
@@ -200,26 +242,28 @@ class TargetHudOverlay : OverlayWindow() {
 
     @Composable
     override fun Content() {
-        AnimatedVisibility(
-            visible = isVisible,
-            enter = fadeIn(
-                animationSpec = tween(durationMillis = 200)
-            ),
-            exit = fadeOut(
-                animationSpec = tween(durationMillis = 200)
-            )
-        ) {
-            TargetHudContent(
-                username = targetUsername,
-                image = targetImage,
-                distance = targetDistance,
-                maxDistance = targetMaxDistance,
-                hurtTime = targetHurtTime,
-                scale = overlayScale,
-                showDistance = displayDistance,
-                showStatus = displayStatus,
-                backgroundOpacity = bgOpacity
-            )
+        HudEditBox(window = this, label = "Target HUD") {
+            AnimatedVisibility(
+                visible = isVisible,
+                enter = fadeIn(
+                    animationSpec = tween(durationMillis = 200)
+                ),
+                exit = fadeOut(
+                    animationSpec = tween(durationMillis = 200)
+                )
+            ) {
+                TargetHudContent(
+                    username = targetUsername,
+                    image = targetImage,
+                    distance = targetDistance,
+                    maxDistance = targetMaxDistance,
+                    hurtTime = targetHurtTime,
+                    scale = overlayScale,
+                    showDistance = displayDistance,
+                    showStatus = displayStatus,
+                    backgroundOpacity = bgOpacity
+                )
+            }
         }
     }
 

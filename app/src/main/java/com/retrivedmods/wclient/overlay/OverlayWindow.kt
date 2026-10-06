@@ -26,6 +26,23 @@ abstract class OverlayWindow {
      */
     open val focusable: Boolean = false
 
+    /**
+     * True for in-game HUD widgets (ArrayList, Watermark, KeyStrokes, …) that can
+     * be repositioned by dragging while the HUD Editor module is enabled.
+     *
+     * HUD windows are `FLAG_NOT_TOUCHABLE` during normal play so they never steal
+     * touches from Minecraft; [OverlayManager.setHudEditMode] clears that flag for
+     * every window that reports `true` here, and restores it on exit.
+     */
+    open val isHudElement: Boolean = false
+
+    /**
+     * Called with the window's new `layoutParams.x` / `layoutParams.y` after a drag
+     * in HUD edit mode. Modules use it to write the position back into their
+     * `Value`s so the layout survives a restart / config switch.
+     */
+    var onHudMoved: ((x: Int, y: Int) -> Unit)? = null
+
     open val layoutParams by lazy {
         LayoutParams().apply {
             width = LayoutParams.WRAP_CONTENT

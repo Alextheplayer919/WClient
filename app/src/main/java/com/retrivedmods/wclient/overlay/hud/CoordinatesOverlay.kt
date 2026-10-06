@@ -7,7 +7,6 @@ import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,7 +28,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,20 +40,37 @@ class CoordinatesOverlay : OverlayWindow() {
 
     private val _layoutParams by lazy {
         super.layoutParams.apply {
+            // Untouchable while playing; HUD edit mode clears the flag so the
+            // element can be dragged.
             flags = flags or
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
             width = WindowManager.LayoutParams.WRAP_CONTENT
             height = WindowManager.LayoutParams.WRAP_CONTENT
             gravity = Gravity.TOP or Gravity.START
-            x = 20
-            y = 120
+            x = DEFAULT_OFFSET_X
+            y = DEFAULT_OFFSET_Y
         }
     }
 
     override val layoutParams: WindowManager.LayoutParams
         get() = _layoutParams
+
+    override val isHudElement: Boolean = true
+
+    /** Offset from the anchor chosen by [position], in layout-params pixels. */
+    private var offsetX by mutableStateOf(DEFAULT_OFFSET_X)
+    private var offsetY by mutableStateOf(DEFAULT_OFFSET_Y)
+
+    init {
+        onHudMoved = { x, y ->
+            offsetX = x
+            offsetY = y
+            onPositionChanged?.invoke(position, x, y)
+        }
+    }
 
     private var showCoordinates by mutableStateOf(true)
     private var showDirection by mutableStateOf(true)
@@ -78,8 +93,14 @@ class CoordinatesOverlay : OverlayWindow() {
     private var netherCoordinates by mutableStateOf(Triple(0.0, 0.0, 0.0))
 
     companion object {
+        private const val DEFAULT_OFFSET_X = 20
+        private const val DEFAULT_OFFSET_Y = 120
+
         val overlayInstance by lazy { CoordinatesOverlay() }
         private var shouldShowOverlay = false
+
+        /** Called after a drag so CoordinatesModule can persist the new offset. */
+        var onPositionChanged: ((CoordinatesModule.Position, Int, Int) -> Unit)? = null
 
         fun showOverlay() {
             if (shouldShowOverlay) {
@@ -122,9 +143,14 @@ class CoordinatesOverlay : OverlayWindow() {
             overlayInstance.showNetherCoords = show
         }
 
-        fun setPosition(pos: CoordinatesModule.Position) {
-            overlayInstance.position = pos
-            overlayInstance.updateLayoutParams()
+        fun setPosition(pos: CoordinatesModule.Position, x: Int, y: Int) {
+            val instance = overlayInstance
+            // Called from the module's update loop; only re-layout on change.
+            if (instance.position == pos && instance.offsetX == x && instance.offsetY == y) return
+            instance.position = pos
+            instance.offsetX = x
+            instance.offsetY = y
+            instance.updateLayoutParams()
         }
 
         fun setFontSize(size: Int) {
@@ -187,7 +213,9 @@ class CoordinatesOverlay : OverlayWindow() {
         }
         
         _layoutParams.gravity = gravity
-        
+        _layoutParams.x = offsetX
+        _layoutParams.y = offsetY
+
         try {
             windowManager.updateViewLayout(composeView, _layoutParams)
         } catch (e: Exception) {}
@@ -210,38 +238,31 @@ class CoordinatesOverlay : OverlayWindow() {
 
         val textColor = getTextColor(rainbowOffset)
 
-        Box(
-            modifier = Modifier
-                .pointerInput(Unit) {
-                    detectDragGestures { _, drag ->
-                        _layoutParams.x = (_layoutParams.x + drag.x.toInt()).coerceAtLeast(0)
-                        _layoutParams.y = (_layoutParams.y + drag.y.toInt()).coerceAtLeast(0)
-                        try {
-                            windowManager.updateViewLayout(composeView, _layoutParams)
-                        } catch (e: Exception) {}
+        HudEditBox(window = this, label = "Coordinates") {
+            Box(
+                modifier = Modifier
+                    .let { modifier ->
+                        if (showBackground) {
+                            modifier
+                                .background(
+                                    WColors.Surface.copy(alpha = backgroundOpacity),
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .clip(RoundedCornerShape(8.dp))
+                        } else modifier
                     }
+                    .let { modifier ->
+                        if (showBorder) {
+                            modifier.border(1.dp, WColors.Border, RoundedCornerShape(8.dp))
+                        } else modifier
+                    }
+                    .padding(8.dp)
+            ) {
+                if (compactMode) {
+                    CompactCoordinatesDisplay(textColor)
+                } else {
+                    DetailedCoordinatesDisplay(textColor)
                 }
-                .let { modifier ->
-                    if (showBackground) {
-                        modifier
-                            .background(
-                                WColors.Surface.copy(alpha = backgroundOpacity),
-                                RoundedCornerShape(8.dp)
-                            )
-                            .clip(RoundedCornerShape(8.dp))
-                    } else modifier
-                }
-                .let { modifier ->
-                    if (showBorder) {
-                        modifier.border(1.dp, WColors.Border, RoundedCornerShape(8.dp))
-                    } else modifier
-                }
-                .padding(8.dp)
-        ) {
-            if (compactMode) {
-                CompactCoordinatesDisplay(textColor)
-            } else {
-                DetailedCoordinatesDisplay(textColor)
             }
         }
     }

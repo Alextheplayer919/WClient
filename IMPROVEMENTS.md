@@ -88,10 +88,13 @@ flag-outs on anarchy servers.
 
 ## 3. Combat HUD / Awareness
 
-- **Resource counter overlay**: totems / egaps / strength pots remaining, rendered next to
-  the hotbar (extend the existing overlay system in `overlay/hud/`).
+- ~~**Resource counter overlay**: totems / egaps / strength pots remaining, rendered next to
+  the hotbar (extend the existing overlay system in `overlay/hud/`).~~ **Done** — `Resource HUD`
+  module (`misc/ResourceHudModule.kt` + `overlay/hud/ResourceHudOverlay.kt`), draggable in HUD
+  edit mode; see `docs/HUD_LAYOUT_AND_RESOURCE_COUNTER_DESIGN.md`.
 - **Effect timers HUD**: live countdowns for Strength, Fire Res, Absorption — the three
-  numbers an anarchy player actually checks mid-fight.
+  numbers an anarchy player actually checks mid-fight. (Strength / Regen / Fire Res / Speed
+  timers now show next to their potion counts in the Resource HUD; Absorption is still open.)
 - **TargetHUD upgrades** (`TargetHudModule`): show the target's pop count (data already
   exists in `PopCounterModule`), absorption hearts, and whether they currently hold a
   totem in offhand.
@@ -143,8 +146,10 @@ flag-outs on anarchy servers.
 - **Atomic writes**: write to `name.json.tmp` then rename, keeping a `.bak` of the
   previous version — prevents corrupt configs on crash-during-save.
 - **Include everything in the profile**: module values + enabled state + shortcut
-  positions (already serialized) **plus HUD element positions** (watermark, keystrokes,
-  target HUD), which are currently not part of the config.
+  positions (already serialized) ~~**plus HUD element positions** (watermark, keystrokes,
+  target HUD), which are currently not part of the config.~~ **Done** — HUD positions are
+  module values now (`Position` / `Offset X/Y`), written back after a drag in HUD edit mode,
+  so they ride along with every config / profile save.
 - **Per-server auto-profiles** (stretch): map server IP → profile and auto-load on
   connect via `RelayService`.
 - **Config sharing**: export/import via clipboard string (base64) in addition to files —

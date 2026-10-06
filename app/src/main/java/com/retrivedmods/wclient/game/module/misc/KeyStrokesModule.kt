@@ -26,8 +26,10 @@ class KeyStrokesModule : Module("keystrokes", ModuleCategory.Misc) {
     private var lastTime = 0L
     private val motionThreshold = 0.02
 
-    private val positionX by intValue("Position X", 90, -100..100)
-    private val positionY by intValue("Position Y", 90, -100..100)
+    // Screen pixels. The old -100..100 range could not reach most of the screen;
+    // dragged positions are written back here by the overlay in HUD edit mode.
+    private var positionX by intValue("Position X", 90, 0..2000)
+    private var positionY by intValue("Position Y", 90, 0..2000)
     private val keySize by intValue("Key Size", 40, 20..80)
     private val keySpacing by intValue("Key Spacing", 4, 0..20)
     private val showSneak by boolValue("Show Sneak", true)
@@ -39,6 +41,10 @@ class KeyStrokesModule : Module("keystrokes", ModuleCategory.Misc) {
 
     override fun onEnabled() {
         super.onEnabled()
+        KeyStrokesOverlay.onPositionChanged = { x, y ->
+            if (positionX != x) positionX = x
+            if (positionY != y) positionY = y
+        }
         if (isSessionCreated) {
             KeyStrokesOverlay.setOverlayEnabled(true)
             updateOverlaySettings()
@@ -47,6 +53,7 @@ class KeyStrokesModule : Module("keystrokes", ModuleCategory.Misc) {
 
     override fun onDisabled() {
         super.onDisabled()
+        KeyStrokesOverlay.onPositionChanged = null
         if (isSessionCreated) {
             KeyStrokesOverlay.setOverlayEnabled(false)
             scope.launch {
@@ -110,6 +117,9 @@ class KeyStrokesModule : Module("keystrokes", ModuleCategory.Misc) {
                     }
 
                     scope.launch {
+                        // Settings used to apply only when the module was toggled;
+                        // cheap no-ops when nothing changed (incl. a dragged position).
+                        updateOverlaySettings()
                         KeyStrokesOverlay.setKeyState("W", keys.w)
                         KeyStrokesOverlay.setKeyState("A", keys.a)
                         KeyStrokesOverlay.setKeyState("S", keys.s)

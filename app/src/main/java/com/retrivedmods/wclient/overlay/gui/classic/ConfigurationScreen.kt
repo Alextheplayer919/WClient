@@ -42,7 +42,8 @@ private val FieldBackground = Color(0xFF140E0E)
 @Composable
 fun ConfigurationScreen(
     snackbarHostState: SnackbarHostState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onToneChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -56,7 +57,13 @@ fun ConfigurationScreen(
         profiles = ConfigManager.listProfiles()
     }
 
-    fun notify(message: String) {
+    /**
+     * Shows the in-GUI status popup. [error] only drives the text colour — the
+     * messages carry no emoji / icon prefixes, so the popup matches the rest of
+     * the client.
+     */
+    fun notify(message: String, error: Boolean = false) {
+        onToneChange(error)
         coroutineScope.launch { snackbarHostState.showSnackbar(message) }
     }
 
@@ -67,9 +74,9 @@ fun ConfigurationScreen(
                 result.onSuccess {
                     profileName = ""
                     refresh()
-                    notify("✅ Saved config \"${it.name}\"")
+                    notify("Saved config \"${it.name}\"")
                 }.onFailure {
-                    notify("❌ ${it.message ?: "Failed to save config"}")
+                    notify(it.message ?: "Failed to save config", error = true)
                 }
             }
         }
@@ -79,8 +86,8 @@ fun ConfigurationScreen(
         coroutineScope.launch(Dispatchers.IO) {
             val result = ConfigManager.loadProfile(name)
             withContext(Dispatchers.Main) {
-                result.onSuccess { notify("✅ Loaded config \"$name\"") }
-                    .onFailure { notify("❌ ${it.message ?: "Failed to load config"}") }
+                result.onSuccess { notify("Loaded config \"$name\"") }
+                    .onFailure { notify(it.message ?: "Failed to load config", error = true) }
             }
         }
     }
@@ -90,9 +97,9 @@ fun ConfigurationScreen(
     ) { uri ->
         uri?.let {
             if (ModuleManager.importConfigFromFile(context, it)) {
-                notify("✅ Config imported — type a name and save to keep it")
+                notify("Config imported — type a name and save to keep it")
             } else {
-                notify("❌ Failed to import config")
+                notify("Failed to import config", error = true)
             }
         }
     }
@@ -120,7 +127,7 @@ fun ConfigurationScreen(
                 onNameChange = { profileName = it },
                 onSaveClick = {
                     if (ConfigManager.sanitizeName(profileName).isEmpty()) {
-                        notify("❌ Enter a config name first")
+                        notify("Enter a config name first", error = true)
                     } else {
                         saveProfile(profileName)
                     }
@@ -150,9 +157,9 @@ fun ConfigurationScreen(
                             pendingDelete = null
                             if (ConfigManager.deleteProfile(profile.name)) {
                                 refresh()
-                                notify("🗑️ Deleted \"${profile.name}\"")
+                                notify("Deleted \"${profile.name}\"")
                             } else {
-                                notify("❌ Failed to delete \"${profile.name}\"")
+                                notify("Failed to delete \"${profile.name}\"", error = true)
                             }
                         } else {
                             pendingDelete = profile.name
@@ -174,9 +181,9 @@ fun ConfigurationScreen(
                             if (success) {
                                 refresh()
                                 val path = File(ConfigManager.configsDirectory, fileName).absolutePath
-                                notify("✅ Exported to: $path")
+                                notify("Exported to: $path")
                             } else {
-                                notify("❌ Failed to export config")
+                                notify("Failed to export config", error = true)
                             }
                         }
                     }
