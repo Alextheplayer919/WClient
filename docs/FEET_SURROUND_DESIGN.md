@@ -135,8 +135,10 @@ Every `PlayerAuthInputPacket`, as often as `place_interval_ms` allows (default 6
    InventoryTransactionPacket
      transactionType = ITEM_USE
      actionType      = 0            (use on block; 1 = click air, cf. BaseConsumeModule)
-     blockPosition   = target block (block coords, air/liquid)
-     blockFace       = 1            (+Y: top face of the support block below the target)
+     blockPosition   = support block (target − 1y, the solid block below the target slot)
+     blockFace       = 1            (+Y: the support's top face — the placement cell is
+                                    resolved as clicked block + face direction, so the new
+                                    block lands in the target slot itself)
      hotbarSlot      = obsidian slot
      itemInHand      = obsidian stack
      playerPosition  = player feet

@@ -43,7 +43,7 @@ object ChunkDataParser {
      */
     fun parseEmbeddedChunk(chunkData: ByteBuf, subChunkCount: Int): List<IntArray>? {
         if (subChunkCount !in 1..MAX_SUB_CHUNKS_PER_COLUMN) return null
-        if (chunkData.readableBytes < 4) return null
+        if (chunkData.readableBytes() < 4) return null
 
         val format = chunkData.getIntLE(chunkData.readerIndex())
         val body: ByteArray = when (format) {
@@ -61,7 +61,7 @@ object ChunkDataParser {
             for (i in 0 until subChunkCount) {
                 if (!readRawSubChunk(buf, subChunks)) return null
             }
-            if (buf.readableBytes != 0) null else subChunks
+            if (buf.readableBytes() != 0) null else subChunks
         } finally {
             buf.release()
         }
@@ -75,7 +75,7 @@ object ChunkDataParser {
     fun readSubChunkStates(data: ByteBuf): IntArray? {
         val expected = SUB_CHUNK_BLOCK_COUNT * 4
         var offset = 0
-        when (data.readableBytes) {
+        when (data.readableBytes()) {
             expected -> {}
             expected + 1 -> {
                 if (data.getByte(data.readerIndex()).toInt() != 1) return null
@@ -96,7 +96,7 @@ object ChunkDataParser {
 
     /** Reads one raw subchunk (flag + 4096 states + both heightmaps) from [buf]. */
     private fun readRawSubChunk(buf: ByteBuf, out: ArrayList<IntArray>): Boolean {
-        if (buf.readableBytes < 1 + SUB_CHUNK_BLOCK_COUNT * 4) return false
+        if (buf.readableBytes() < 1 + SUB_CHUNK_BLOCK_COUNT * 4) return false
         if (buf.readByte() != 1.toByte()) return false // legacy palette subchunk — unsupported
 
         val states = IntArray(SUB_CHUNK_BLOCK_COUNT)
@@ -110,16 +110,16 @@ object ChunkDataParser {
 
     /** Heightmap section: 1 type byte, then 1024 map bytes when the type is HAS_DATA (1). */
     private fun skipHeightMap(buf: ByteBuf): Boolean {
-        if (buf.readableBytes < 1) return false
+        if (buf.readableBytes() < 1) return false
         if (buf.readByte().toInt() == 1) {
-            if (buf.readableBytes < HEIGHT_MAP_LENGTH) return false
+            if (buf.readableBytes() < HEIGHT_MAP_LENGTH) return false
             buf.skipBytes(HEIGHT_MAP_LENGTH)
         }
         return true
     }
 
     private fun copyFrom(buf: ByteBuf, skip: Int): ByteArray? {
-        val length = buf.readableBytes - skip
+        val length = buf.readableBytes() - skip
         if (length < 0) return null
         val bytes = ByteArray(length)
         buf.getBytes(buf.readerIndex() + skip, bytes)

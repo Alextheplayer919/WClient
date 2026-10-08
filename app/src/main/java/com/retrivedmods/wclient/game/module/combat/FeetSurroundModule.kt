@@ -17,6 +17,7 @@ import org.cloudburstmc.protocol.bedrock.packet.InventoryTransactionPacket
 import org.cloudburstmc.protocol.bedrock.packet.MobEquipmentPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.sin
 
 /**
@@ -83,9 +84,10 @@ class FeetSurroundModule : Module("feet_surround", ModuleCategory.Combat) {
         }
 
         val player = session.localPlayer
-        // The block is placed on the TOP face of the block below the target; the click point is
-        // the centre of that face.
-        val clickPoint = Vector3f.from(target.x + 0.5f, target.y, target.z + 0.5f)
+        // The block is placed on the TOP face of the block below the target slot — Bedrock
+        // resolves the placement cell as clicked block + face direction. The click point is
+        // the centre of that top face.
+        val clickPoint = Vector3f.from(target.x + 0.5f, target.y.toFloat(), target.z + 0.5f)
 
         // Silent aim at the block face we're placing against (server-side rotation only).
         if (silentRot) {
@@ -110,9 +112,9 @@ class FeetSurroundModule : Module("feet_surround", ModuleCategory.Combat) {
         val player = session.localPlayer
         val feet = player.vec3Position
         val own = Vector3i.from(
-            Math.floor(feet.x).toInt(),
-            Math.floor(feet.y).toInt(),
-            Math.floor(feet.z).toInt()
+            floor(feet.x).toInt(),
+            floor(feet.y).toInt(),
+            floor(feet.z).toInt()
         )
         val world = session.world
         val eye = feet.add(0f, EYE_HEIGHT, 0f)
@@ -130,7 +132,7 @@ class FeetSurroundModule : Module("feet_surround", ModuleCategory.Combat) {
         val yawRad = Math.toRadians(player.rotationYaw.toDouble()).toFloat()
         val look = Vector3f.from(-sin(yawRad), 0f, cos(yawRad))
         return candidates.minByOrNull { slot ->
-            val toSlot = Vector3f.from(slot.x - own.x, 0f, slot.z - own.z).normalize()
+            val toSlot = Vector3f.from((slot.x - own.x).toFloat(), 0f, (slot.z - own.z).toFloat()).normalize()
             1f - toSlot.dot(look)
         }
     }
@@ -157,10 +159,14 @@ class FeetSurroundModule : Module("feet_surround", ModuleCategory.Combat) {
             equipServerSide(slot, item)
         }
         try {
+            // Click the TOP face of the block below the target slot: the placement cell is
+            // resolved as clicked block + face direction, so the new block lands in the
+            // target slot itself.
+            val support = Vector3i.from(target.x, target.y - 1, target.z)
             session.serverBound(InventoryTransactionPacket().apply {
                 transactionType = InventoryTransactionType.ITEM_USE
                 actionType = ACTION_USE_BLOCK
-                blockPosition = target
+                blockPosition = support
                 blockFace = FACE_TOP
                 hotbarSlot = slot
                 itemInHand = item
