@@ -73,10 +73,10 @@ class CrystalSmashModule : Module("crystal_smash", ModuleCategory.Combat) {
     private val firstHitPending: MutableSet<Entity> = Collections.newSetFromMap(WeakHashMap())
 
     /** Crystal -> time of our last strike, pending confirmation by server knockback. */
-    private val lastStrike: MutableMap<Entity, Long> = Collections.newMapFromMap(WeakHashMap())
+    private val lastStrike = WeakHashMap<Entity, Long>()
 
     /** Crystal -> time we declared its hits void; skipped until it moves or the doubt expires. */
-    private val doubtful: MutableMap<Entity, Long> = Collections.newMapFromMap(WeakHashMap())
+    private val doubtful = WeakHashMap<Entity, Long>()
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled) return
@@ -84,8 +84,13 @@ class CrystalSmashModule : Module("crystal_smash", ModuleCategory.Combat) {
         val packet = interceptablePacket.packet
 
         // A crystal that reacts to our hit (server-side knockback) is confirmed — clear doubt.
-        if (packet is MoveEntityAbsolutePacket || packet is MoveEntityDeltaPacket) {
-            clearDoubtFor(packet.runtimeEntityId)
+        val movedId = when (packet) {
+            is MoveEntityAbsolutePacket -> packet.runtimeEntityId
+            is MoveEntityDeltaPacket -> packet.runtimeEntityId
+            else -> null
+        }
+        if (movedId != null) {
+            clearDoubtFor(movedId)
         }
 
         if (packet !is PlayerAuthInputPacket) return
