@@ -91,9 +91,14 @@ object RotationUtils {
      * per-tick maximum (spread over the next tick, not a speed setting), body yaw stays within
      * the vanilla head/body limit, and a sub-degree deterministic jitter keeps consecutive packets
      * from being bit-identical.
+     *
+     * @param eyeHeight aim from the player's feet (`0f`, combat default) or from the eye —
+     *                  block-placement modules aim at faces at feet level, so they pass the
+     *                  real eye height (pitch error otherwise is ~atan(1.62 / distance)).
      */
-    fun aimSilently(player: LocalPlayer, point: Vector3f): Vector3f {
-        val wanted = lookAt(player.vec3Position, point)
+    fun aimSilently(player: LocalPlayer, point: Vector3f, eyeHeight: Float = 0f): Vector3f {
+        val origin = if (eyeHeight == 0f) player.vec3Position else player.vec3Position.add(0f, eyeHeight, 0f)
+        val wanted = lookAt(origin, point)
         val last = player.serverRotation
 
         var pitch = wanted.x

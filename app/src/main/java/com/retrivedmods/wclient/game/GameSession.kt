@@ -8,6 +8,7 @@ import com.retrivedmods.wclient.game.registry.BlockMappingProvider
 import com.retrivedmods.wclient.game.registry.ItemMapping
 import com.retrivedmods.wclient.game.registry.ItemMappingProvider
 import com.retrivedmods.wclient.game.world.Level
+import com.retrivedmods.wclient.game.world.World
 import com.retrivedmods.wclient.game.utils.combat.ConsumeTracker
 import com.retrivedmods.wclient.game.utils.combat.HitTracker
 import com.retrivedmods.wclient.game.utils.combat.LatencyTracker
@@ -26,6 +27,9 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
 
     val localPlayer = LocalPlayer(this)
     val level = Level(this)
+
+    /** Voxel store (block states around the player) — see `game/world/World.kt`. */
+    val world = World(this)
 
     /** Relay <-> server RTT estimate used to size aim prediction. */
     val latency = LatencyTracker(this)
@@ -46,6 +50,14 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
 
     lateinit var blockMapping: BlockMapping
     lateinit var itemMapping: ItemMapping
+
+    /**
+     * The MCPEData mappings for this protocol version loaded successfully. False on protocol
+     * versions without bundled state files (801+ today) — modules that need block/item names
+     * must stay dormant then.
+     */
+    val mappingsLoaded: Boolean
+        get() = ::blockMapping.isInitialized && ::itemMapping.isInitialized
 
     private var startGameReceived = false
 
@@ -116,6 +128,7 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
 
         localPlayer.onPacketBound(packet)
         level.onPacketBound(packet)
+        world.onPacketBound(packet)
 
         if (latency.onPacket(packet)) return true
         hitTracker.onPacket(packet)
@@ -178,6 +191,7 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
     override fun onDisconnect(reason: String) {
         localPlayer.onDisconnect()
         level.onDisconnect()
+        world.onDisconnect()
         latency.reset()
         hitTracker.reset()
         consumeTracker.reset()
