@@ -20,8 +20,10 @@ effects). An anarchy-grade AutoPot should:
 - **Drinkable potions only** (standard anarchy loadout — nobody carries splash):
   full hold-use emulation, i.e. the same start → hold ~31 ticks → consume packet
   sequence as eating, so AutoPot and AutoEat share one consume implementation.
-- **Silent switch**: hotbar-swap to the potion slot via `MobEquipmentPacket`, drink, swap
-  back — same trick `HotbarSwitcherModule` already does, so the scaffolding exists.
+- **Switch mode** (implemented, shared with AutoEat): `Visible` (default) moves the client's
+  hotbar to the potion slot, drinks, and moves it back, like a key press. `Silent` sends only
+  the server-bound `MobEquipmentPacket`. `HotbarSwitcherModule` is client-bound only.
+  See `docs/AUTOEAT_AUTOPOT_DESIGN.md` §2 and §4.
 - **Smart drink timing**: since a drink commits ~1.6 s, schedule it early (re-pot at
   ~8–10 s remaining) and prefer lulls in the exchange, with a hard deadline so the
   effect can never fully drop.

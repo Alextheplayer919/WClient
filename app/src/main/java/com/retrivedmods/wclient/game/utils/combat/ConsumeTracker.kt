@@ -102,6 +102,10 @@ class ConsumeTracker(private val session: GameSession) {
                 if (isUserConsuming && now - userConsumeStartMs > MAX_CONSUME_MS) {
                     isUserConsuming = false
                 }
+                // Same fail-safe for the server flag: a lost "stop using" must not block AutoEat / AutoPot forever.
+                if (serverUsingItem && now - lastServerUsingItemChangeMs > MAX_CONSUME_MS) {
+                    serverUsingItem = false
+                }
             }
 
             is InventoryTransactionPacket -> {

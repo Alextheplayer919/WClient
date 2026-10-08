@@ -42,17 +42,32 @@ class PlayerInventory(private val player: LocalPlayer) : EntityInventory(player)
         }
     }
 
+    /** Mirrors a hotbar change this proxy injected itself. Those packets never reach [onPacketBound]. */
+    fun setHeldSlotLocally(slot: Int) {
+        if (slot in 0..8) {
+            heldItemSlot = slot
+        }
+    }
+
     override fun onPacketBound(packet: BedrockPacket) {
+        if (packet is MobEquipmentPacket && packet.runtimeEntityId == player.runtimeEntityId &&
+            packet.containerId == ContainerId.INVENTORY
+        ) {
+            // The held slot has to move BEFORE the item is written. EntityInventory stores the item in
+            // `hand`, which is content[heldItemSlot]. Doing it the other way round overwrote the
+            // previously held slot with the newly selected item, so the model lost track of the real
+            // items and AutoEat / AutoPot / attacks read the wrong stack.
+            if (packet.hotbarSlot in 0..8) {
+                heldItemSlot = packet.hotbarSlot
+                content[packet.hotbarSlot] = packet.item
+            }
+            return
+        }
+
         super.onPacketBound(packet)
         when (packet) {
             is PlayerHotbarPacket -> {
                 heldItemSlot = packet.selectedHotbarSlot
-            }
-
-            is MobEquipmentPacket -> {
-                if (packet.runtimeEntityId == player.runtimeEntityId) {
-                    heldItemSlot = packet.hotbarSlot
-                }
             }
 
             is InventoryTransactionPacket -> {

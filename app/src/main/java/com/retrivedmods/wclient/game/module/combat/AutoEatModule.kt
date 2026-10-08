@@ -38,10 +38,16 @@ class AutoEatModule : BaseConsumeModule(
     private fun health(): Float =
         session.localPlayer.attributes[Attribute.HEALTH]?.value ?: 20f
 
+    /** True while the Regeneration from the last gap is still running. */
+    private fun regenerationActive(): Boolean =
+        (session.localPlayer.getEffectById(Effect.REGENERATION)?.duration ?: 0) > 0
+
     override fun shouldConsume(): Boolean {
         val health = health()
         if (health <= 0f) return false
-        emergencyEat = health <= emergencyHealth
+        // While the Regeneration of the last gap is still running, HP is still under the threshold, so without
+        // this check every cooldown would eat another gap and drain the whole stack.
+        emergencyEat = health <= emergencyHealth && !regenerationActive()
         if (emergencyEat) return true
         return keepAbsorption && absorption() <= 0f
     }

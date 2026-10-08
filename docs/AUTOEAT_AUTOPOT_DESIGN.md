@@ -1,6 +1,6 @@
 # AutoEat / AutoPot — Proxy-Level Design
 
-> **Status: IMPLEMENTED** — `ConsumeTracker` + `ConsumeLock`
+> **Status: IMPLEMENTED** (revised: where the behaviour below differs from the current code, §4 is authoritative) — `ConsumeTracker` + `ConsumeLock`
 > (`game/utils/combat/`), `BaseConsumeModule` + `AutoEatModule` +
 > `AutoPotModule` (`game/module/combat/`). Every eat/drink shows a
 > client-only chat message via `session.displayClientMessage` (same
@@ -40,9 +40,11 @@ of "I ate but got nothing").
 The full proxy-side eat, invisible to the client's screen:
 
 ```
-1. SELECT    MobEquipmentPacket (server-bound only)
+1. SELECT    MobEquipmentPacket (server-bound)
              hotbarSlot = food slot, item = food stack
-             → server now believes we hold the gap; client UI untouched.
+             + in VISIBLE mode (default) a PlayerHotbarPacket (client-bound,
+             selectHotbarSlot = true) so the client shows the food as well.
+             → server now believes we hold the gap. SILENT mode leaves the client UI untouched.
 
 2. START     InventoryTransactionPacket
              transactionType = ITEM_USE, actionType = 1 (click air)
@@ -67,17 +69,22 @@ The full proxy-side eat, invisible to the client's screen:
      • UpdateAttributesPacket (hunger/saturation/absorption change)
      • MobEffectPacket ADD (egap: absorption/regen; pot: strength…)
      • InventorySlotPacket decrementing that food stack
-   Not received in ~400 ms → retry the whole sequence ONCE. If the server
-   instead *restores* the slot (rejection), abort and surface it on the HUD.
+   Not received in ~400 ms: if the server still reports USING_ITEM, the release was
+   too early or lost → send CONSUME once more (no new START, so a second item can
+   never be consumed). Otherwise → failure, reported on the HUD. The next attempt's
+   hold grows by 200 ms (max +800 ms). Nothing is re-sent blindly: a second START can
+   consume a second item when the first was applied but not confirmed. The decision
+   round simply runs again after the cooldown if the condition still holds.
 
 5. RESTORE   MobEquipmentPacket back to the player's real held slot
              (PlayerInventory.heldItemSlot — already tracked).
 ```
 
-Why this doesn't desync the client: we only spoof **server-bound** equip packets;
-the server's own `InventorySlotPacket`/`InventoryContentPacket` updates flow back
-through the relay as usual, so the client's inventory shows the eaten gap count
-correctly without us doing anything.
+Why the client's inventory stays correct: the server's own `InventorySlotPacket` /
+`InventoryContentPacket` updates flow back through the relay as usual, so the eaten
+gap's count shows correctly without us doing anything. In SILENT mode only
+server-bound equip packets are spoofed. VISIBLE mode also moves the client's hotbar
+and restores it afterwards.
 
 Why the checkpoints matter: "send and pray" is what loses fights. Every step has a
 server acknowledgement with a measured deadline (sized from `LatencyTracker`), one
@@ -107,7 +114,7 @@ whole game:
   pending drink (abort = just don't send CONSUME; send a slot restore — the
   sip is lost but the server state stays clean and the retry reschedules).
 
-Confirmation = `MobEffectPacket` ADD/UPDATE for the expected effect ID; that
+Confirmation = `MobEffectPacket` ADD/MODIFY for the expected effect ID; that
 same packet refreshes the expiry timer that drives the next cycle.
 
 ### Fail-safes
@@ -117,10 +124,11 @@ same packet refreshes the expiry timer that drives the next cycle.
   If the gap/pot isn't in the hotbar, a restock move happens *between* fights
   (never mid-sequence).
 - **Server-auth inventories** (`localPlayer.inventoriesServerAuthoritative == true`):
-  legacy transactions may be rejected — detect it at Checkpoint A on first use,
-  flip to the ItemStackRequest path, remember per-server.
-- **Hard timeout** on the whole sequence (~2.5 s) that force-releases the lock, so
-  a dropped packet can never wedge AutoTotem out of saving you.
+  legacy transactions may be rejected. Not implemented yet. The fallback to try is
+  the item-use transaction carried on `PlayerAuthInputPacket.itemUseTransaction`
+  (`PERFORM_ITEM_INTERACTION`), remembered per server. Needs a live test first.
+- **Hard timeout** on the whole sequence (hold + 4 s) that restores the held slot and
+  releases the lock, so a dropped packet can never wedge AutoTotem out of saving you.
 
 ---
 
@@ -136,3 +144,33 @@ Regen / Speed), re-drink threshold in seconds remaining (default ~8–10 s),
 (always on, from the ConsumeTracker).
 
 Both share the item-use lock with AutoTotem — totem always wins.
+
+**Switch Mode** (both modules, default `Visible`): `Visible` moves the client's hotbar
+onto the food/potion for the consume and back afterwards, like a key press. `Silent`
+only tells the server (see §2 step 1).
+
+---
+
+## 4. Revision notes (current behaviour)
+
+- **Held-slot model fixed.** The client's own `MobEquipmentPacket` used to write the
+  new item into the *previous* slot, because `EntityInventory.hand` was set before the
+  held slot moved. AutoEat/AutoPot then saw ghost items in the hotbar and sent
+  transactions for the wrong stack. `PlayerInventory` now moves the held slot first.
+- **Threading.** Packets arrive on the client and the server thread. The state machine
+  is serialised with a lock.
+- **Confirmations count only after the release** was sent. Earlier ones are left over
+  from a previous consume.
+- **Retry policy.** See §2 checkpoint B. Failed sequences are not re-sent blindly. The
+  hold grows after unconfirmed releases.
+- **Player scrolls mid-sequence.** The consume is dropped quietly: no failure message,
+  no hold penalty. The player's own selection wins.
+- **Restock** never swaps out the held slot.
+- **AutoEat emergency eats** wait while the previous gap's Regeneration is still running.
+  Otherwise low HP eats the whole stack.
+- **Stale server flag.** `ConsumeTracker.serverUsingItem` expires after 4 s, like
+  `isUserConsuming`. A lost "stop using" can't block AutoEat/AutoPot forever.
+
+Not verified on a live server. Start and release packets are unchanged. If a server
+ignores legacy item-use transactions, none of the above helps. The failure message
+names the step that was not acknowledged.
