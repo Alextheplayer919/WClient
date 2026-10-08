@@ -20,7 +20,7 @@ import org.cloudburstmc.protocol.bedrock.packet.SetEntityDataPacket
  *  3. server -> client: [SetEntityDataPacket] setting/clearing [EntityFlag.USING_ITEM] /
  *     [EntityFlag.EATING] on our own entity (authoritative state).
  *
- * AutoEat / AutoPot check [isUserConsuming] and hold off while the user eats manually,
+ * AutoEat checks [isUserConsuming] and holds off while the user eats manually,
  * and use [serverUsingItem] as the server-side "consume started" confirmation checkpoint.
  *
  * Note: packets injected by modules via [GameSession.serverBound] bypass the relay's
@@ -102,7 +102,7 @@ class ConsumeTracker(private val session: GameSession) {
                 if (isUserConsuming && now - userConsumeStartMs > MAX_CONSUME_MS) {
                     isUserConsuming = false
                 }
-                // Same fail-safe for the server flag: a lost "stop using" must not block AutoEat / AutoPot forever.
+                // Same fail-safe for the server flag: a lost "stop using" must not block AutoEat forever.
                 if (serverUsingItem && now - lastServerUsingItemChangeMs > MAX_CONSUME_MS) {
                     serverUsingItem = false
                 }

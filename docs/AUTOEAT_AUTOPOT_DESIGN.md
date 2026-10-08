@@ -1,8 +1,8 @@
 # AutoEat / AutoPot — Proxy-Level Design
 
 > **Status: IMPLEMENTED** (revised: where the behaviour below differs from the current code, §4 is authoritative) — `ConsumeTracker` + `ConsumeLock`
-> (`game/utils/combat/`), `BaseConsumeModule` + `AutoEatModule` +
-> `AutoPotModule` (`game/module/combat/`). Every eat/drink shows a
+> (`game/utils/combat/`), `BaseConsumeModule` + `AutoEatModule` (`game/module/combat/`).
+> AutoPot has been removed, so the potion sections below are history only. Every eat shows a
 > client-only chat message via `session.displayClientMessage` (same
 > mechanism the `.command` replies use — the server never sees it).
 

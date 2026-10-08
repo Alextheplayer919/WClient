@@ -9,7 +9,7 @@ WClient owns its own directory and configs can be saved in-game at any moment.
 
 ## 1. The Three Pillars of Anarchy Combat
 
-### 1.1 AutoPot / StrengthKeeper (new module — highest impact, currently missing)
+### 1.1 AutoPot / StrengthKeeper — removed (maintainer decision; notes kept for history)
 There is no potion automation at all right now (`EffectsModule` only *applies* client-side
 effects). An anarchy-grade AutoPot should:
 

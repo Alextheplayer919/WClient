@@ -56,7 +56,7 @@ class PlayerInventory(private val player: LocalPlayer) : EntityInventory(player)
             // The held slot has to move BEFORE the item is written. EntityInventory stores the item in
             // `hand`, which is content[heldItemSlot]. Doing it the other way round overwrote the
             // previously held slot with the newly selected item, so the model lost track of the real
-            // items and AutoEat / AutoPot / attacks read the wrong stack.
+            // items and AutoEat / attacks read the wrong stack.
             if (packet.hotbarSlot in 0..8) {
                 heldItemSlot = packet.hotbarSlot
                 content[packet.hotbarSlot] = packet.item

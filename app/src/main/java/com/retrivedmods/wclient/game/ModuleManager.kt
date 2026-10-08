@@ -16,7 +16,6 @@ import com.retrivedmods.wclient.game.module.combat.WAuraModule
 import com.retrivedmods.wclient.game.module.combat.AutoEatModule
 import com.retrivedmods.wclient.game.module.combat.AutoFightModule
 import com.retrivedmods.wclient.game.module.combat.AutoHvHModule
-import com.retrivedmods.wclient.game.module.combat.AutoPotModule
 import com.retrivedmods.wclient.game.module.combat.AutoTotemModule
 import com.retrivedmods.wclient.game.module.combat.HotbarSwitcherModule
 import com.retrivedmods.wclient.game.module.combat.InfiniteAuraModule
@@ -99,7 +98,6 @@ object ModuleManager {
             add(ACAModule())
             add(AutoTotemModule())
             add(AutoEatModule())
-            add(AutoPotModule())
             add(AutoHvHModule())
             add(EnemyHunterModule())
             add(AntiKnockbackModule())
