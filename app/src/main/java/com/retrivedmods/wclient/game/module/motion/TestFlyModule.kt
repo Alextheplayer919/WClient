@@ -25,6 +25,12 @@ import kotlin.math.sqrt
  *                                  and lets it recover gradually.
  *  - "Shortcut" value           -> WClient already has per-module shortcut buttons
  *                                  (Module.isShortcutDisplayed), so no extra setting is needed.
+ *
+ * External control surface:
+ *  - `externalForward` / `externalStrafe` / `externalWantUp` / `externalWantDown` are
+ *    optional overrides used by OpFightBotModule. When null, the module behaves exactly
+ *    as it did before. When non-null, they replace the corresponding values read from
+ *    PlayerAuthInputPacket.
  */
 class TestFlyModule : Module("test_fly", ModuleCategory.Motion) {
 
@@ -47,6 +53,19 @@ class TestFlyModule : Module("test_fly", ModuleCategory.Motion) {
     /** 0..1 multiplier applied to requested speeds; drops on a lagback, recovers slowly. */
     private var governor = 1f
     private var settleVerticalTicks = 0
+
+    // ── External control surface (used by OpFightBotModule) ────────────────────────────────
+    /** When non-null, overrides the forward input derived from PlayerAuthInput.motion.y. */
+    var externalForward: Float? = null
+
+    /** When non-null, overrides the strafe input derived from PlayerAuthInput.motion.x. */
+    var externalStrafe: Float? = null
+
+    /** When non-null, overrides the WANT_UP / JUMPING input bit. */
+    var externalWantUp: Boolean? = null
+
+    /** When non-null, overrides the WANT_DOWN / SNEAKING input bit. */
+    var externalWantDown: Boolean? = null
 
     companion object {
         /** Vanilla max horizontal speed per tick squared, matches sqrt(5.99) in the original. */
@@ -93,14 +112,19 @@ class TestFlyModule : Module("test_fly", ModuleCategory.Motion) {
             return
         }
 
-        // ── Read input ────────────────────────────────────────────────────────────────────
-        val wantUp = packet.inputData.contains(PlayerAuthInputData.WANT_UP) ||
-                packet.inputData.contains(PlayerAuthInputData.JUMPING)
-        val wantDown = packet.inputData.contains(PlayerAuthInputData.WANT_DOWN) ||
-                packet.inputData.contains(PlayerAuthInputData.SNEAKING)
+        // ── Read input (external override for bots takes priority) ────────────────────────
+        val wantUp = externalWantUp
+            ?: (packet.inputData.contains(PlayerAuthInputData.WANT_UP) ||
+               packet.inputData.contains(PlayerAuthInputData.JUMPING))
+        val wantDown = externalWantDown
+            ?: (packet.inputData.contains(PlayerAuthInputData.WANT_DOWN) ||
+               packet.inputData.contains(PlayerAuthInputData.SNEAKING))
 
         val motion = packet.motion
-        if (!wantUp && !wantDown && motion.x == 0f && motion.y == 0f && glide == 0f) {
+        val effStrafe  = externalStrafe  ?: motion.x
+        val effForward = externalForward ?: motion.y
+
+        if (!wantUp && !wantDown && effStrafe == 0f && effForward == 0f && glide == 0f) {
             lastPos = selfPos
             return
         }
@@ -132,8 +156,8 @@ class TestFlyModule : Module("test_fly", ModuleCategory.Motion) {
         val sinYaw = sin(yawRad)
         val cosYaw = cos(yawRad)
 
-        val strafe = motion.x
-        val forward = motion.y
+        val strafe  = effStrafe
+        val forward = effForward
 
         var motionX = strafe * cosYaw - forward * sinYaw
         var motionZ = forward * cosYaw + strafe * sinYaw
