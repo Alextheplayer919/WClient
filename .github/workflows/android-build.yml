@@ -107,6 +107,27 @@ jobs:
         continue-on-error: true
         run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
+      # A green `test` task is not proof that anything executed: with the wrong runner configured Gradle
+      # passes zero tests without complaint (that is exactly how transport-raknet's tests sat unused).
+      # Echo the parsed counts so each run carries its own evidence.
+      - name: Test summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          rows = []
+          for x in sorted(glob.glob('**/build/test-results/test/*.xml', recursive=True)):
+              module = x.split('/build/')[0] or 'root'
+              t = ET.parse(x).getroot()
+              rows.append("%s: %s tests, %s failures, %s errors, %s skipped"
+                          % (module, t.get('tests'), t.get('failures'), t.get('errors'), t.get('skipped')))
+          if not rows:
+              print("::notice title=Tests::no test-results XML found - no tests ran")
+          else:
+              print("::notice title=Tests (%d result files)::%s"
+                    % (len(rows), '%0A'.join(r.replace('%', '%25') for r in rows)))
+          PY
+
       - name: Collect APKs
         run: |
           mkdir -p out
