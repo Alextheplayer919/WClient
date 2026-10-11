@@ -51,6 +51,10 @@ public class Bedrock_v898 extends Bedrock_v860 {
             .updateSerializer(ResourcePackStackPacket.class, ResourcePackStackSerializer_v898.INSTANCE)
             .updateSerializer(StartGamePacket.class, StartGameSerializer_v898.INSTANCE)
             .updateSerializer(TextPacket.class, TextSerializer_v898.INSTANCE)
+            // Upstream registers the clientbound half of the data store here; the vendored tree had pruned
+            // it, and Bedrock_v924.updateSerializer(ClientboundDataStorePacket) then dies in static init with
+            // "Packet does not exist". Restored so the 898 chain and the 924/944 codecs agree.
+            .registerPacket(ClientboundDataStorePacket::new, ClientboundDataStoreSerializer_v898.INSTANCE, 330, PacketRecipient.CLIENT)
             .registerPacket(ServerboundDataStorePacket::new, ServerboundDataStoreSerializer_v898.INSTANCE, 332, PacketRecipient.SERVER)
             .build();
 }
