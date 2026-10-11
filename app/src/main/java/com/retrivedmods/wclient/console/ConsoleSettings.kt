@@ -10,8 +10,14 @@ import com.retrivedmods.wtrace.WTrace
  * every change (the trace hooks read the flags live, so no restart is needed).
  */
 data class ConsoleSettings(
-    /** Show the boot console before the main UI when the app starts. */
-    val showOnBoot: Boolean = true,
+    /**
+     * Show the console as a full screen before the main UI when the app starts.
+     *
+     * Off by default: the console already lives in the app (Home page panel, sidebar page, floating
+     * window over the game) and records from before the relay is switched on, so the boot screen is
+     * only for the moments the app does not even start.
+     */
+    val showOnBoot: Boolean = false,
     /** Leave the boot console automatically once it has finished, so a normal launch still feels normal. */
     val autoContinueOnBoot: Boolean = true,
     /** How long the boot console stays up before continuing by itself. */
@@ -49,7 +55,7 @@ data class ConsoleSettings(
         fun load(context: Context): ConsoleSettings {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             return ConsoleSettings(
-                showOnBoot = prefs.getBoolean("show_on_boot", true),
+                showOnBoot = prefs.getBoolean("show_on_boot", false),
                 autoContinueOnBoot = prefs.getBoolean("auto_continue", true),
                 bootHoldSeconds = prefs.getInt("boot_hold_seconds", 6),
                 packetTrace = prefs.getBoolean("packet_trace", true),

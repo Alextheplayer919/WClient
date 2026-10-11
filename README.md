@@ -57,6 +57,24 @@ Example:
 }
 ```
 
+## Console
+
+WClient opens on a built-in console before the relay can be started, so a join can be recorded from
+the very first line:
+
+* **Boot console** - shown on launch, before the loading screen, with a countdown you can cancel.
+* **Console page** - the terminal icon in the sidebar: live log, filters, search, packet table and
+  report export while the relay runs.
+* **Floating console** - the terminal button on the overlay, over the game, for watching a freeze
+  while it happens.
+
+It captures app code logs, the relay's RakNet and Bedrock layers (handshake and MTU, splits and
+reassembly, acks/nacks/resends, compression and encryption switches, timeouts and disconnect
+reasons), and every forwarded packet with its direction, wire size and packet id. A watchdog reports
+stalls by shape: link dead, downstream starved (the "everyone froze" case) or the game never reached
+the relay. Reports are saved to `WClient/console/` and the whole picture is described in
+[docs/CONSOLE.md](docs/CONSOLE.md).
+
 ## License
 
 WClient is licensed under the **GNU General Public License v3.0 (GPLv3)**.

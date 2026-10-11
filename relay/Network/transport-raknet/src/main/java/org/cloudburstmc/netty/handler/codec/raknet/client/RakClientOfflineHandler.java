@@ -90,7 +90,7 @@ public class RakClientOfflineHandler extends SimpleChannelInboundHandler<ByteBuf
         });
 
         if (RakTrace.enabled()) {
-            int[] sizes = this.rakChannel.config().getOption(RakChannelOption.RAK_MTU_SIZES);
+            Integer[] sizes = this.rakChannel.config().getOption(RakChannelOption.RAK_MTU_SIZES);
             StringBuilder ladder = new StringBuilder();
             for (int i = 0; i < sizes.length; i++) {
                 if (i > 0) {

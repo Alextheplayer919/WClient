@@ -103,6 +103,17 @@ object Services {
         File(context.cacheDir, "token_cache.json")
 
         isActive = true
+
+        // Session marker: everything after this line belongs to this capture, and this is the line the
+        // player can point at when they say "the freeze happened on this attempt".
+        WTrace.info(
+            "session",
+            "=== relay START: ${captureModeModel.serverHostName}:${captureModeModel.serverPort} " +
+                "(mode=${captureModeModel.serverConfigType}, optimize=${captureModeModel.enableServerOptimizations}, " +
+                "protected=${captureModeModel.isProtectedServer()}, " +
+                "account=${AccountManager.selectedAccount?.mcChain?.displayName ?: "none"}) ==="
+        )
+
         handler.post {
             OverlayManager.show(context)
         }
@@ -169,6 +180,7 @@ object Services {
     }
 
     private fun off() {
+        WTrace.info("session", "=== relay STOP requested (was forwarding until now) ===")
         thread(name = "WRelayThread") {
             ModuleManager.saveConfig()
 
