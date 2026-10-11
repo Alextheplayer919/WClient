@@ -65,6 +65,7 @@ public class RakClientOfflineHandler extends SimpleChannelInboundHandler<ByteBuf
 
     private RakOfflineState state = RakOfflineState.HANDSHAKE_1;
     private int connectionAttempts = 0;
+    private int lastLoggedMtuSizeIndex = -1;
     private int cookie;
     private boolean security;
 
@@ -268,10 +269,21 @@ public class RakClientOfflineHandler extends SimpleChannelInboundHandler<ByteBuf
     }
 
     private void sendOpenConnectionRequest1(Channel channel) {
-        int mtuSizeIndex = Math.min(this.connectionAttempts / 4, this.rakChannel.config().getOption(RakChannelOption.RAK_MTU_SIZES).length - 1);
-        int mtuSize = this.rakChannel.config().getOption(RakChannelOption.RAK_MTU_SIZES)[mtuSizeIndex];
+        Integer[] mtuSizes = this.rakChannel.config().getOption(RakChannelOption.RAK_MTU_SIZES);
+        int lastMtuSizeIndex = Math.max(0, mtuSizes.length - 1);
+        int mtuSizeIndex = Math.min(this.connectionAttempts / 2, lastMtuSizeIndex);
+        int mtuSize = mtuSizes[mtuSizeIndex];
+        int attempt = this.connectionAttempts + 1;
+
+        if (mtuSizeIndex != this.lastLoggedMtuSizeIndex) {
+            this.lastLoggedMtuSizeIndex = mtuSizeIndex;
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_INFO, "handshake", "probing MTU " + mtuSize + "B (attempt "
+                        + attempt + ", ladder index " + mtuSizeIndex + "/" + lastMtuSizeIndex + ")");
+            }
+        }
         if (RakTrace.verbose()) {
-            RakTrace.verbose(RakTrace.LEVEL_TRACE, "handshake", "Request1 #" + (this.connectionAttempts + 1)
+            RakTrace.verbose(RakTrace.LEVEL_TRACE, "handshake", "Request1 #" + attempt
                     + " probing MTU " + mtuSize + "B");
         }
 

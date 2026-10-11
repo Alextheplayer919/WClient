@@ -3,8 +3,11 @@ package com.retrivedmods.wrelay
 import com.retrivedmods.wrelay.listener.WRelayPacketListener
 import com.retrivedmods.wtrace.WPacketStats
 import com.retrivedmods.wtrace.WTrace
+import io.netty.channel.Channel
+import io.netty.channel.ChannelHandlerContext
+import io.netty.channel.ChannelInboundHandlerAdapter
 import io.netty.util.internal.PlatformDependent
-import net.kyori.adventure.text.Component
+import org.cloudburstmc.netty.channel.raknet.RakDisconnectReason
 import org.cloudburstmc.netty.handler.codec.raknet.common.RakSessionCodec
 import org.cloudburstmc.protocol.bedrock.BedrockClientSession
 import org.cloudburstmc.protocol.bedrock.BedrockPeer
@@ -22,48 +25,124 @@ class WRelaySession internal constructor(
     val wRelay: WRelay
 ) {
 
+    @Volatile
+    private var lastUpstreamClose: String? = null
+
+    @Volatile
+    private var lastGameClose: String? = null
+
+    @Volatile
+    var handshakeCompletedWithServer: Boolean = false
+        internal set
+
+    @Volatile
+    private var upstreamContextHandoffNeedsRetry = false
+
+    @Volatile
+    private var upstreamContextHandoffRetried = false
+
+    private val upstreamLock = Any()
+
     val server = ServerSession(peer, subClientId)
 
+    @Volatile
     var client: ClientSession? = null
         internal set(value) {
-            value?.let {
-                try {
-                    it.codec = server.codec
-                    it.peer.codecHelper.blockDefinitions = server.peer.codecHelper.blockDefinitions
-                    it.peer.codecHelper.itemDefinitions = server.peer.codecHelper.itemDefinitions
-                    it.peer.codecHelper.cameraPresetDefinitions = server.peer.codecHelper.cameraPresetDefinitions
-                    it.peer.codecHelper.encodingSettings = server.peer.codecHelper.encodingSettings
-
-                    var pair: Pair<BedrockPacket, Boolean>
-                    var processedCount = 0
-                    while (packetQueue.poll().also { packetPair -> pair = packetPair } != null) {
-                        try {
-                            if (pair.second) {
-                                it.sendPacketImmediately(pair.first)
-                            } else {
-                                it.sendPacket(pair.first)
-                            }
-                            processedCount++
-                        } catch (e: Exception) {
-                            println("Failed to send queued packet: ${e.message}")
-                        }
-                    }
-                    if (processedCount > 0) {
-                        println("Processed $processedCount queued packets")
-                        WTrace.info("relay", "upstream link up: flushed $processedCount queued packet(s) to the server")
-                    }
-                } catch (e: Exception) {
-                    println("Failed to initialize client session: ${e.message}")
-                    e.printStackTrace()
+            if (value == null) {
+                synchronized(upstreamLock) {
+                    field = null
                 }
+                return
             }
-            field = value
+
+            // The upstream channel can be visible before its packet pipeline has finished installing
+            // the Bedrock codec. Try every piece independently: one unavailable registry must not
+            // prevent the queue from being drained or the remaining context from being copied.
+            upstreamContextHandoffNeedsRetry = carryServerContextToUpstream(value)
+            upstreamContextHandoffRetried = false
+            synchronized(upstreamLock) {
+                field = value
+                drainQueue(value)
+            }
         }
 
     val listeners: MutableList<WRelayPacketListener> = ArrayList()
 
     private val packetQueue: Queue<Pair<BedrockPacket, Boolean>> = PlatformDependent.newMpscQueue()
     private val maxQueueSize = 1000
+
+    private fun carryServerContextToUpstream(upstream: ClientSession): Boolean {
+        var failed = false
+
+        fun copy(what: String, action: () -> Unit) {
+            try {
+                action()
+            } catch (error: Throwable) {
+                failed = true
+                val reason = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+                val message = "could not carry $what to the upstream session ($reason); " +
+                    "the handoff will be retried when the server sends its network settings."
+                println(message)
+                WTrace.error("relay", message, error.stackTraceToString())
+            }
+        }
+
+        copy("codec") { upstream.codec = server.codec }
+        copy("blockDefinitions") {
+            upstream.peer.codecHelper.blockDefinitions = server.peer.codecHelper.blockDefinitions
+        }
+        copy("itemDefinitions") {
+            upstream.peer.codecHelper.itemDefinitions = server.peer.codecHelper.itemDefinitions
+        }
+        copy("cameraPresetDefinitions") {
+            upstream.peer.codecHelper.cameraPresetDefinitions = server.peer.codecHelper.cameraPresetDefinitions
+        }
+        copy("encodingSettings") {
+            upstream.peer.codecHelper.encodingSettings = server.peer.codecHelper.encodingSettings
+        }
+
+        return failed
+    }
+
+    /** Retry a failed codec/definition handoff once the upstream Bedrock pipeline is fully installed. */
+    fun retryUpstreamContextHandoffAfterNetworkSettings() {
+        if (!upstreamContextHandoffNeedsRetry || upstreamContextHandoffRetried) {
+            return
+        }
+        val upstream = client ?: return
+
+        upstreamContextHandoffRetried = true
+        WTrace.info("relay", "server sent NetworkSettingsPacket; retrying the upstream codec/definition handoff")
+        upstreamContextHandoffNeedsRetry = carryServerContextToUpstream(upstream)
+    }
+
+    /** Queue flushing stays independent of the codec handoff so a copy failure can never skip it. */
+    private fun drainQueue(upstream: ClientSession) {
+        var flushedCount = 0
+        while (true) {
+            val queued = packetQueue.poll() ?: break
+            try {
+                if (queued.second) {
+                    upstream.sendPacketImmediately(queued.first)
+                } else {
+                    upstream.sendPacket(queued.first)
+                }
+                flushedCount++
+            } catch (error: Throwable) {
+                val reason = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+                WTrace.error(
+                    "relay",
+                    "failed to flush queued ${queued.first.javaClass.simpleName} to the server ($reason)",
+                    error.stackTraceToString()
+                )
+            }
+        }
+
+        if (flushedCount > 0) {
+            println("Processed $flushedCount queued packets")
+        }
+        WTrace.info("relay", "upstream link up: flushed $flushedCount queued packet(s) to the server")
+    }
 
     /**
      * Round trip time (ms) of the upstream RakNet link as measured by the transport itself
@@ -75,8 +154,44 @@ class WRelaySession internal constructor(
      */
     val upstreamPingMs: Long?
         get() = runCatching {
-            client?.peer?.channel?.pipeline()?.get(RakSessionCodec::class.java)?.ping?.takeIf { it > 0L }
+            rakCodec(client?.peer)?.ping?.takeIf { it > 0L }
         }.getOrNull()
+
+    /** Search through proxy wrappers to the channel that owns the RakNet transport pipeline. */
+    internal fun rakCodec(peer: BedrockPeer?): RakSessionCodec? =
+        peerChannels(peer).firstNotNullOfOrNull { channel ->
+            runCatching { channel.pipeline().get(RakSessionCodec::class.java) }.getOrNull()
+        }
+
+    /**
+     * Return the channel that owns the RakNet codec. Proxy channels keep their pipeline on a parent,
+     * so inspecting only [BedrockPeer.channel] misses both the session codec and the real transport.
+     */
+    internal fun rakChannel(peer: BedrockPeer?): Channel? {
+        val channels = peerChannels(peer)
+        return channels.firstOrNull { channel ->
+            runCatching { channel.pipeline().get(RakSessionCodec::class.java) != null }.getOrDefault(false)
+        } ?: channels.firstOrNull()
+    }
+
+    private fun peerChannels(peer: BedrockPeer?): List<Channel> {
+        val channels = ArrayList<Channel>(4)
+        var channel: Channel? = peer?.channel
+        var depth = 0
+        while (depth < 4) {
+            val current = channel ?: break
+            channels.add(current)
+            channel = runCatching { current.parent() }.getOrNull()
+            depth++
+        }
+        return channels
+    }
+
+    private fun linkIsOpen(peer: BedrockPeer?): Boolean {
+        val peerChannel = peer?.channel ?: return false
+        val transportChannel = rakChannel(peer) ?: return false
+        return peerChannel.isActive && transportChannel.isActive
+    }
 
     /**
      * MTU and split budget of the RakNet link on [peer], for the log.
@@ -88,8 +203,7 @@ class WRelaySession internal constructor(
      * "the world never loads" into "the link can only carry N bytes per message".
      */
     fun describeLink(name: String, peer: BedrockPeer?): String {
-        val codec = runCatching { peer?.channel?.pipeline()?.get(RakSessionCodec::class.java) }
-            .getOrNull() ?: return "$name: RakNet session not ready"
+        val codec = rakCodec(peer) ?: return "$name: RakNet session not ready"
         return runCatching {
             "$name: mtu=${codec.mtu} maxMessageBytes=${codec.maxMessageSize}"
         }.getOrElse { "$name: RakNet session not measurable (${it.javaClass.simpleName})" }
@@ -105,13 +219,21 @@ class WRelaySession internal constructor(
     fun linkSnapshot(): String {
         val upstream = runCatching {
             val session = client ?: return@runCatching "upstream=connecting"
-            val mtu = runCatching { session.peer.channel.pipeline().get(RakSessionCodec::class.java)?.mtu }.getOrNull()
-            "upstream=connected(mtu=$mtu, rtt=${upstreamPingMs ?: "?"}ms)"
+            if (!linkIsOpen(session.peer)) {
+                "upstream=CLOSED(lastClose=${lastUpstreamClose ?: "UNKNOWN"})"
+            } else {
+                val mtu = rakCodec(session.peer)?.mtu
+                "upstream=connected(mtu=$mtu, rtt=${upstreamPingMs ?: "?"}ms)"
+            }
         }.getOrElse { "upstream=unknown(${it.javaClass.simpleName})" }
 
         val game = runCatching {
-            val mtu = server.peer.channel.pipeline().get(RakSessionCodec::class.java)?.mtu
-            "client=connected(mtu=$mtu)"
+            if (!linkIsOpen(server.peer)) {
+                "client=CLOSED(lastClose=${lastGameClose ?: "UNKNOWN"})"
+            } else {
+                val mtu = rakCodec(server.peer)?.mtu
+                "client=connected(mtu=$mtu)"
+            }
         }.getOrElse { "client=unknown(${it.javaClass.simpleName})" }
 
         val now = System.currentTimeMillis()
@@ -119,7 +241,54 @@ class WRelaySession internal constructor(
         val lastToServer = stats.lastToServerMs().takeIf { it > 0L }?.let { "${now - it}ms ago" } ?: "never"
 
         return "$upstream $game linkPackets=${stats.totalToServer()}↑/${stats.totalToClient()}↓ " +
-            "lastUp=$lastToServer lastDown=$lastToClient queued=${packetQueue.size}"
+            "lastUp=$lastToServer lastDown=$lastToClient queued=${packetQueue.size} " +
+            "lastUpstreamClose=${lastUpstreamClose ?: "none"} lastGameClose=${lastGameClose ?: "none"}"
+    }
+
+    private fun observeCloseReason(peer: BedrockPeer, upstream: Boolean) {
+        val pipeline = runCatching { peer.channel.pipeline() }.getOrNull() ?: return
+        if (pipeline.context(BedrockPeer.NAME) == null) {
+            return
+        }
+        val linkName = if (upstream) "upstream" else "game"
+        val handlerName = "wrelay-close-tracker-$linkName-${System.identityHashCode(this)}"
+        if (pipeline.context(handlerName) != null) {
+            return
+        }
+
+        try {
+            pipeline.addBefore(BedrockPeer.NAME, handlerName, object : ChannelInboundHandlerAdapter() {
+                private var observedReason: String? = null
+
+                override fun userEventTriggered(ctx: ChannelHandlerContext, evt: Any) {
+                    if (evt is RakDisconnectReason) {
+                        observedReason = evt.name
+                        rememberCloseReason(upstream, evt.name)
+                    }
+                    ctx.fireUserEventTriggered(evt)
+                }
+
+                override fun channelInactive(ctx: ChannelHandlerContext) {
+                    if (observedReason == null) {
+                        rememberCloseReason(upstream, "CHANNEL_INACTIVE")
+                    }
+                    ctx.fireChannelInactive()
+                }
+            })
+        } catch (error: Throwable) {
+            val reason = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+            WTrace.warn("relay", "could not observe the $linkName channel close reason ($reason)")
+        }
+    }
+
+    private fun rememberCloseReason(upstream: Boolean, reason: String) {
+        if (upstream) {
+            lastUpstreamClose = reason
+        } else {
+            lastGameClose = reason
+        }
+        val linkName = if (upstream) "upstream" else "game-client"
+        WTrace.warn("relay", "$linkName RakNet channel closed: $reason")
     }
 
     /** Packet counters of this session, shared with the console's packet panel. */
@@ -169,48 +338,46 @@ class WRelaySession internal constructor(
         }
     }
 
-    fun serverBound(packet: BedrockPacket) {
-        if (!isEncodable(packet)) {
-            dropUnsupported(packet)
-            return
-        }
-        if (client != null) {
-            try {
-                client!!.sendPacket(packet)
-            } catch (e: Exception) {
-                println("Failed to send packet to server: ${e.message}")
-                WTrace.error("relay", "failed to send ${packet.javaClass.simpleName} upstream: ${e.message}")
-            }
-        } else {
-            if (packetQueue.size < maxQueueSize) {
-                packetQueue.add(packet to false)
-                // Packets queued before the upstream session exists are the join handshake: if this
-                // number grows while the console shows nothing else, the upstream connect is the stall.
-                WTrace.debug("relay", "queued ${packet.javaClass.simpleName} until the upstream link is up (queue=${packetQueue.size})")
-            } else {
-                println("Packet queue full, dropping packet")
-                WTrace.error("relay", "packet queue full ($maxQueueSize), dropping ${packet.javaClass.simpleName}")
-            }
-        }
-    }
+    fun serverBound(packet: BedrockPacket) = sendUpstreamOrQueue(packet, immediately = false)
 
-    fun serverBoundImmediately(packet: BedrockPacket) {
+    fun serverBoundImmediately(packet: BedrockPacket) = sendUpstreamOrQueue(packet, immediately = true)
+
+    private fun sendUpstreamOrQueue(packet: BedrockPacket, immediately: Boolean) {
         if (!isEncodable(packet)) {
             dropUnsupported(packet)
             return
         }
-        if (client != null) {
-            try {
-                client!!.sendPacketImmediately(packet)
-            } catch (e: Exception) {
-                println("Failed to send packet immediately to server: ${e.message}")
-            }
-        } else {
-            if (packetQueue.size < maxQueueSize) {
-                packetQueue.add(packet to true)
+
+        val upstream = synchronized(upstreamLock) {
+            val current = client
+            if (current == null) {
+                if (packetQueue.size < maxQueueSize) {
+                    packetQueue.add(packet to immediately)
+                    // Packets queued before the upstream session exists are the join handshake: if this
+                    // number grows while the console shows nothing else, the upstream connect is the stall.
+                    WTrace.debug(
+                        "relay",
+                        "queued ${packet.javaClass.simpleName} until the upstream link is up (queue=${packetQueue.size})"
+                    )
+                } else {
+                    println("Packet queue full, dropping packet")
+                    WTrace.error("relay", "packet queue full ($maxQueueSize), dropping ${packet.javaClass.simpleName}")
+                }
+                null
             } else {
-                println("Packet queue full, dropping packet")
+                current
             }
+        } ?: return
+
+        try {
+            if (immediately) {
+                upstream.sendPacketImmediately(packet)
+            } else {
+                upstream.sendPacket(packet)
+            }
+        } catch (error: Exception) {
+            println("Failed to send ${if (immediately) "immediate " else ""}packet to server: ${error.message}")
+            WTrace.error("relay", "failed to send ${packet.javaClass.simpleName} upstream: ${error.message}")
         }
     }
 
@@ -218,6 +385,7 @@ class WRelaySession internal constructor(
         BedrockServerSession(peer, subClientId) {
 
         init {
+            observeCloseReason(peer, upstream = false)
             packetHandler = object : BedrockPacketHandler {
                 override fun onDisconnect(reason: CharSequence) {
                     println("Client disconnect: $reason")
@@ -283,6 +451,7 @@ class WRelaySession internal constructor(
         BedrockClientSession(peer, subClientId) {
 
         init {
+            observeCloseReason(peer, upstream = true)
             packetHandler = object : BedrockPacketHandler {
 
                 override fun onDisconnect(reason: CharSequence) {
