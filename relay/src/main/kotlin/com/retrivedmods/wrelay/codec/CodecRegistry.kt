@@ -105,8 +105,13 @@ object CodecRegistry {
         } catch (e: Throwable) {
             // LinkageError included: without it, one codec whose dependency is absent throws out of the
             // object's initializer and every version the relay can speak disappears with it.
-            failedRegistrations[protocolVersion] = e.toString()
-            System.err.println("Failed to register codec $minecraftVersion (protocol $protocolVersion): $e")
+            // A codec is a static field, so anything thrown while building it arrives wrapped in an
+            // ExceptionInInitializerError whose own message is useless ("...Error: null"). The reason that
+            // matters - a duplicate packet id, a serializer for a packet the parent never registered - is
+            // one level down, so record that.
+            val why = (e as? ExceptionInInitializerError)?.cause?.toString() ?: e.toString()
+            failedRegistrations[protocolVersion] = why
+            System.err.println("Failed to register codec $minecraftVersion (protocol $protocolVersion): $why")
         }
     }
 
