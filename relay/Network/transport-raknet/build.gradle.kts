@@ -32,6 +32,8 @@ dependencies {
     api(libs.expiringmap)
     testImplementation(libs.testng)
     testImplementation(libs.junit.jupiter)
+    // Matches the platform version that junit-jupiter 5.8.1 brings in; Gradle does not supply one.
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.8.1")
 }
 
 // The tests under src/test are JUnit 5 (org.junit.jupiter.api). Without this the default JUnit4/TestNG
