@@ -196,6 +196,10 @@ public class StartGamePacket implements BedrockPacket {
      * @since v827
      */
     public boolean tickDeathSystemsEnabled;
+    /**
+     * @since v924
+     */
+    private boolean hasServerJoinInformation;
 
     @Override
     public final PacketSignal handle(BedrockPacketHandler handler) {
@@ -223,4 +227,3 @@ public class StartGamePacket implements BedrockPacket {
         return type.cast(levelName);
     }
 }
-

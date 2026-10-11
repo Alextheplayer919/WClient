@@ -16,23 +16,31 @@
 
 package org.cloudburstmc.netty.handler.codec.raknet.common;
 
-import org.cloudburstmc.netty.channel.raknet.RakChannel;
-import org.cloudburstmc.netty.channel.raknet.packet.EncapsulatedPacket;
-
-import java.util.Queue;
-import java.util.concurrent.TimeUnit;
-
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.ScheduledFuture;
 import io.netty.util.internal.PlatformDependent;
+import org.cloudburstmc.netty.channel.raknet.RakChannel;
+import org.cloudburstmc.netty.channel.raknet.RakDisconnectReason;
+import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
+import org.cloudburstmc.netty.channel.raknet.packet.EncapsulatedPacket;
+
+import java.util.Queue;
+import java.util.concurrent.TimeUnit;
 
 public class RakUnhandledMessagesQueue extends SimpleChannelInboundHandler<EncapsulatedPacket> {
     public static final String NAME = "rak-unhandled-messages-queue";
+    // Only bridges the gap until NewIncomingConnection activates the channel.
+    static final int MAX_QUEUED_MESSAGES = 128;
+    static final int MAX_QUEUED_BYTES = 256 * 1024;
 
     private final RakChannel channel;
     private final Queue<EncapsulatedPacket> messages = PlatformDependent.newMpscQueue();
+    private int queuedMessages;
+    private int queuedBytes;
+    private long addedTime;
+    private boolean closing;
     private ScheduledFuture<?> future;
 
     public RakUnhandledMessagesQueue(RakChannel channel) {
@@ -41,25 +49,24 @@ public class RakUnhandledMessagesQueue extends SimpleChannelInboundHandler<Encap
 
     @Override
     public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
+        this.addedTime = System.currentTimeMillis();
         this.future = ctx.channel().eventLoop().scheduleAtFixedRate(() -> this.trySendMessages(ctx),
                 0, 50, TimeUnit.MILLISECONDS);
     }
 
     @Override
     public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
-        if (this.future != null) {
-            this.future.cancel(false);
-            this.future = null;
-        }
-
-        EncapsulatedPacket message;
-        while ((message = this.messages.poll()) != null) {
-            ReferenceCountUtil.release(message);
-        }
+        this.cancelFuture();
+        this.releaseMessages();
     }
 
     private void trySendMessages(ChannelHandlerContext ctx) {
         if (!this.channel.isActive()) {
+            // Read here, child options are applied after this handler is added.
+            long timeout = this.channel.config().getOption(RakChannelOption.RAK_SESSION_TIMEOUT);
+            if (System.currentTimeMillis() - this.addedTime >= timeout) {
+                this.close(RakDisconnectReason.TIMED_OUT);
+            }
             return;
         }
 
@@ -74,11 +81,40 @@ public class RakUnhandledMessagesQueue extends SimpleChannelInboundHandler<Encap
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, EncapsulatedPacket msg) throws Exception {
         if (!this.channel.isActive()) {
+            if (this.closing) {
+                return;
+            }
+            this.queuedBytes += msg.getBuffer().readableBytes();
+            if (++this.queuedMessages > MAX_QUEUED_MESSAGES || this.queuedBytes > MAX_QUEUED_BYTES) {
+                this.close(RakDisconnectReason.QUEUE_TOO_LONG);
+                return;
+            }
             this.messages.offer(msg.retain());
             return;
         }
 
         this.trySendMessages(ctx);
         ctx.fireChannelRead(msg.retain());
+    }
+
+    private void close(RakDisconnectReason reason) {
+        this.closing = true;
+        this.cancelFuture();
+        this.releaseMessages();
+        this.channel.pipeline().fireUserEventTriggered(reason).close();
+    }
+
+    private void cancelFuture() {
+        if (this.future != null) {
+            this.future.cancel(false);
+            this.future = null;
+        }
+    }
+
+    private void releaseMessages() {
+        EncapsulatedPacket message;
+        while ((message = this.messages.poll()) != null) {
+            ReferenceCountUtil.release(message);
+        }
     }
 }

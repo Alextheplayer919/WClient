@@ -17,7 +17,9 @@ import java.util.concurrent.ConcurrentHashMap
 object RealmsManager {
 
     private const val TAG = "RealmsManager"
-    private const val CLIENT_VERSION = "1.21.120"
+    // The Realms API gates on this string; it must be a version the endpoint knows about. Bedrock
+    // dropped the leading "1." in 26.x marketing but still reports 1.26.x internally.
+    private const val CLIENT_VERSION = "1.26.12"
 
     private val coroutineScope = CoroutineScope(Dispatchers.IO + CoroutineName("RealmsManagerCoroutine"))
 

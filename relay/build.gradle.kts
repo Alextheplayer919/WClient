@@ -16,6 +16,7 @@ dependencies {
 
     testImplementation(libs.junit.jupiter.api)
     testRuntimeOnly(libs.junit.jupiter.engine)
+    testRuntimeOnly(libs.junit.platform.launcher)
 
     implementation(platform(libs.log4j.bom))
     implementation(libs.log4j.api)
@@ -37,6 +38,12 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // CI only ever shows the task name unless the assertion text is printed, so print it.
+    testLogging {
+        events("failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStackTraces = true
+    }
 }
 
 kotlin {

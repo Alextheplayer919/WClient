@@ -8,6 +8,18 @@ object CodecRegistry {
     private val minecraftVersionMap = mutableMapOf<String, Int>()
     private val sortedProtocolVersions = mutableListOf<Int>()
 
+    /**
+     * Protocols whose codec class failed to load. Registration used to swallow this into a println, so a
+     * typo or a not-yet-vendored codec silently removed a version and every client on it fell through to
+     * [getClosestCodec] instead of failing loudly.
+     */
+    private val failedRegistrations = mutableMapOf<Int, String>()
+    val unregisteredProtocols: List<Int>
+        get() = failedRegistrations.keys.sorted()
+    /** Protocol -> why its codec class could not be loaded, e.g. a missing optional dependency. */
+    val unregisteredReasons: Map<Int, String>
+        get() = failedRegistrations.toMap()
+
     init {
         registerAllCodecs()
     }
@@ -70,7 +82,10 @@ object CodecRegistry {
         registerCodec(859, "1.21.120", "org.cloudburstmc.protocol.bedrock.codec.v859.Bedrock_v859")
         registerCodec(860, "1.21.124", "org.cloudburstmc.protocol.bedrock.codec.v860.Bedrock_v860")
         registerCodec(898, "1.21.130", "org.cloudburstmc.protocol.bedrock.codec.v898.Bedrock_v898")
-
+        registerCodec(924, "1.26.0", "org.cloudburstmc.protocol.bedrock.codec.v924.Bedrock_v924")
+        // Bedrock 26.10-26.13 share protocol 944; upstream labels the codec with the release that
+        // introduced it, and the game still reports itself with the legacy "1." prefix (1.26.12.2).
+        registerCodec(944, "1.26.10", "org.cloudburstmc.protocol.bedrock.codec.v944.Bedrock_v944")
 
         sortedProtocolVersions.sortDescending()
     }
@@ -87,8 +102,16 @@ object CodecRegistry {
             sortedProtocolVersions.add(protocolVersion)
             
             println("Registered codec: $minecraftVersion (protocol $protocolVersion)")
-        } catch (e: Exception) {
-            println("Failed to register codec $minecraftVersion: ${e.message}")
+        } catch (e: Throwable) {
+            // LinkageError included: without it, one codec whose dependency is absent throws out of the
+            // object's initializer and every version the relay can speak disappears with it.
+            // A codec is a static field, so anything thrown while building it arrives wrapped in an
+            // ExceptionInInitializerError whose own message is useless ("...Error: null"). The reason that
+            // matters - a duplicate packet id, a serializer for a packet the parent never registered - is
+            // one level down, so record that.
+            val why = (e as? ExceptionInInitializerError)?.cause?.toString() ?: e.toString()
+            failedRegistrations[protocolVersion] = why
+            System.err.println("Failed to register codec $minecraftVersion (protocol $protocolVersion): $why")
         }
     }
 
@@ -102,7 +125,10 @@ object CodecRegistry {
             return exactMatch
         }
 
-        val closestVersion = sortedProtocolVersions.findLast { it <= protocolVersion }
+        // sortedProtocolVersions is descending, so the first entry <= the request is the newest one that
+        // can still speak to it. findLast here returned the OLDEST (291 / 1.2.0) for any unknown protocol,
+        // which is what a newer or preview client would silently get.
+        val closestVersion = sortedProtocolVersions.firstOrNull { it <= protocolVersion }
             ?: sortedProtocolVersions.last()
 
         return codecMap[closestVersion]!!

@@ -12,6 +12,10 @@ java {
 dependencies {
     // Lombok as annotation processor (avoids circular dependency)
     compileOnly("org.projectlombok:lombok:1.18.34")
+    // org.slf4j is referenced directly here (TextSerializer_v898/v924 log malformed JSON, and lombok's
+    // @Slf4j generates a Logger field in several serializers), so declare it rather than hoping it arrives
+    // transitively: a class that cannot link dies with NoClassDefFoundError while the codec is being built.
+    api("org.slf4j:slf4j-api:2.0.16")
     annotationProcessor("org.projectlombok:lombok:1.18.34")
 
     api(project(":relay:Protocol:common"))

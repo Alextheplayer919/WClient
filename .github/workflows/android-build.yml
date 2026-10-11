@@ -45,13 +45,88 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      # The test tasks are listed alongside the APK build so CI actually runs the relay/Network unit
+      # tests - nothing ran them before, including the split-packet and codec-registry regressions.
+      # tee keeps the log for the annotation step below; pipefail so a compiler failure still fails the step.
       - name: Build debug APK (signed, installable)
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleDebug :relay:test :relay:Network:transport-raknet:test \
+            --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+
+      # The raw job log is served from a blob store that is not always reachable from tooling, and a wall
+      # of javac output buries the mistake. Mirror the compiler errors (with their symbol/location lines)
+      # into one check annotation, which the PR UI and `gh api /check-runs/{id}/annotations` both surface.
+      # The raw job log is served from a blob store that is not always reachable from tooling, and Gradle
+      # prints a task name where a human needs the assertion. Collect compiler errors, the failure summary
+      # and the JUnit XML (which has the message + stack) into one check annotation - visible on the PR and
+      # via `gh api /check-runs/{id}/annotations`.
+      - name: Report build errors
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import glob, html, re, sys
+
+          keep = []
+          try:
+              lines = open('/tmp/build.log', errors='replace').read().splitlines()
+          except OSError:
+              lines = []
+          for i, l in enumerate(lines):
+              if re.search(r'error:\s|^e: ', l):
+                  keep.append(l.strip())
+                  for nxt in lines[i + 1:i + 4]:
+                      if re.match(r'\s*(symbol:|location:|required:|found:|reason:|where:)', nxt):
+                          keep.append(nxt.strip())
+          summary = [i for i, l in enumerate(lines) if l.strip() == '* What went wrong:']
+          if summary:
+              keep.extend(x.strip() for x in lines[summary[-1]:summary[-1] + 25])
+          for x in glob.glob('**/build/test-results/test/*.xml', recursive=True):
+              text = open(x, errors='replace').read()
+              module = x.split('/build/')[0] or 'root'
+              for m in re.finditer(r'<testcase name="([^"]*)"[^>]*>\s*<(failure|error)[^>]*message="([^"]*)"', text):
+                  keep.append(f"{module}: test {m.group(1)} -> {html.unescape(m.group(3))[:200]}")
+              for m in re.finditer(r'<(failure|error)[^>]*>(.*?)</\1>', text, re.S):
+                  body = html.unescape(m.group(2))
+                  keep.extend(
+                      l.strip() for l in body.splitlines()
+                      if 'Caused by' in l or re.search(r'ExceptionInInitializerError|NoClassDefFoundError|Exception:', l)
+                      or 'at org.cloudburstmc' in l or 'at com.retrivedmods' in l
+                  )
+          seen, out = set(), []
+          for l in keep:
+              if l and l not in seen:
+                  seen.add(l)
+                  out.append(l)
+          msg = "\n".join(out[:120])[:20000] or "build failed, no error lines matched"
+          print("::error title=Build errors (%d lines)::%s" % (len(out), msg.replace('%', '%25').replace('\n', '%0A')))
+          PY
 
       - name: Build release APK (minified)
         id: release
         continue-on-error: true
         run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      # A green `test` task is not proof that anything executed: with the wrong runner configured Gradle
+      # passes zero tests without complaint (that is exactly how transport-raknet's tests sat unused).
+      # Echo the parsed counts so each run carries its own evidence.
+      - name: Test summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          rows = []
+          for x in sorted(glob.glob('**/build/test-results/test/*.xml', recursive=True)):
+              module = x.split('/build/')[0] or 'root'
+              t = ET.parse(x).getroot()
+              rows.append("%s: %s tests, %s failures, %s errors, %s skipped"
+                          % (module, t.get('tests'), t.get('failures'), t.get('errors'), t.get('skipped')))
+          if not rows:
+              print("::notice title=Tests::no test-results XML found - no tests ran")
+          else:
+              print("::notice title=Tests (%d result files)::%s"
+                    % (len(rows), '%0A'.join(r.replace('%', '%25') for r in rows)))
+          PY
 
       - name: Collect APKs
         run: |
