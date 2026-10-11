@@ -8,6 +8,7 @@ import io.netty.handler.codec.MessageToMessageCodec;
 import org.cloudburstmc.netty.channel.raknet.RakReliability;
 import org.cloudburstmc.netty.channel.raknet.packet.RakMessage;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockBatchWrapper;
+import org.cloudburstmc.protocol.bedrock.netty.trace.BedrockTrace;
 
 import java.util.List;
 
@@ -30,6 +31,16 @@ public class FrameIdCodec extends MessageToMessageCodec<RakMessage, BedrockBatch
         try {
             buf.addComponent(true, ctx.alloc().ioBuffer(1).writeByte(frameId));
             buf.addComponent(true, msg.getCompressed().retainedSlice());
+
+            if (BedrockTrace.enabled()) {
+                // The frame the transport receives next: it is this byte count that becomes RakNet
+                // split parts, so it is the number to compare with "Refusing to send a N byte message".
+                int size = msg.getCompressed().readableBytes() + 1;
+                if (size >= 262144 || BedrockTrace.verbose()) {
+                    BedrockTrace.log(BedrockTrace.LEVEL_TRACE, "frame",
+                            "frame " + frameId + " -> transport: " + size + "B");
+                }
+            }
 
             out.add(buf.retain());
         } finally {

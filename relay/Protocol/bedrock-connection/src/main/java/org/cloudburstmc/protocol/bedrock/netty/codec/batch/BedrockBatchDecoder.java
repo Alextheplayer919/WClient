@@ -5,6 +5,7 @@ import io.netty.channel.ChannelHandler.Sharable;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToMessageDecoder;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockBatchWrapper;
+import org.cloudburstmc.protocol.bedrock.netty.trace.BedrockTrace;
 import org.cloudburstmc.protocol.common.util.VarInts;
 
 import java.util.List;
@@ -21,10 +22,23 @@ public class BedrockBatchDecoder extends MessageToMessageDecoder<BedrockBatchWra
         }
 
         ByteBuf buffer = msg.getUncompressed().slice();
+        int packets = 0;
         while (buffer.isReadable()) {
             int packetLength = VarInts.readUnsignedInt(buffer);
             ByteBuf packetBuf = buffer.readRetainedSlice(packetLength);
             out.add(packetBuf);
+            packets++;
+        }
+
+        if (BedrockTrace.enabled()) {
+            int bytes = msg.getUncompressed().readableBytes();
+            // A batch arriving on the game link carries the world (chunks, entities); report the large
+            // ones by default so the console shows the stream that a freeze would interrupt.
+            if (bytes >= 65536 || BedrockTrace.verbose()) {
+                BedrockTrace.log(BedrockTrace.LEVEL_TRACE, "batch",
+                        "batch in: " + packets + " packet(s), " + bytes + "B uncompressed"
+                                + (msg.getAlgorithm() != null ? ", compression=" + msg.getAlgorithm() : ""));
+            }
         }
     }
 }

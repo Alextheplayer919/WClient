@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -55,6 +56,7 @@ enum class MainScreenPages(
     AccountPage(Icons.Rounded.AccountCircle, { AccountPageContent() }),
     ServerPage(Icons.Rounded.Storage, { ServerPageContent() }),
     RealmsPage(Icons.Rounded.Cloud, { RealmsPageContent() }),
+    ConsolePage(Icons.Rounded.Terminal, { ConsolePageContent() }),
     SettingsPage(Icons.Rounded.Settings, { SettingsPageContent() }),
     AboutPage(Icons.Rounded.Info, { AboutPageContent() })
 }

@@ -1,6 +1,6 @@
 package com.retrivedmods.wclient.game.module.misc
 
-import android.util.Log
+import com.retrivedmods.wclient.util.WLog as Log
 import com.retrivedmods.wclient.game.InterceptablePacket
 import com.retrivedmods.wclient.game.Module
 import com.retrivedmods.wclient.game.ModuleCategory

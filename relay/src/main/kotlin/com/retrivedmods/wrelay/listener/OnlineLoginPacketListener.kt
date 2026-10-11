@@ -3,6 +3,7 @@ package com.retrivedmods.wrelay.listener
 import com.retrivedmods.wrelay.WRelaySession
 import com.retrivedmods.wrelay.util.AuthUtils
 import com.retrivedmods.wrelay.util.refresh
+import com.retrivedmods.wtrace.WTrace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -40,6 +41,12 @@ class OnlineLoginPacketListener(
     override fun beforeClientBound(packet: BedrockPacket): Boolean {
         if (packet is LoginPacket) {
             println("Processing login packet")
+            val startedAt = System.currentTimeMillis()
+            WTrace.info(
+                "login",
+                "the game client sent LoginPacket (protocol ${packet.protocolVersion}); " +
+                    "the upstream link is opened from here, nothing else is forwarded until it is up"
+            )
 
             try {
                 val jws = JsonWebSignature()
@@ -47,9 +54,11 @@ class OnlineLoginPacketListener(
 
                 skinData = JSONObject(JsonUtil.parseJson(jws.unverifiedPayload))
                 connectServer()
+                WTrace.debug("login", "login JWT parsed and upstream connect dispatched (+${System.currentTimeMillis() - startedAt}ms)")
             } catch (e: Exception) {
                 println("Failed to process login packet: ${e.message}")
                 e.printStackTrace()
+                WTrace.error("login", "could not parse the game client's LoginPacket: ${e.message}")
                 wRelaySession.server.disconnect("Failed to process login: ${e.message}")
                 return true
             }
@@ -65,10 +74,13 @@ class OnlineLoginPacketListener(
             if (threshold > 0) {
                 wRelaySession.client!!.setCompression(packet.compressionAlgorithm)
                 println("Compression enabled: ${packet.compressionAlgorithm}, threshold: $threshold")
+                WTrace.info("login", "upstream compression enabled: ${packet.compressionAlgorithm}, threshold=$threshold")
             } else {
                 wRelaySession.client!!.setCompression(PacketCompressionAlgorithm.NONE)
                 println("Compression disabled")
+                WTrace.info("login", "upstream compression disabled by the server")
             }
+            val chainStartedAt = System.currentTimeMillis()
 
             try {
                 val chain = AuthUtils.fetchOnlineChain(fullBedrockSession)
@@ -86,9 +98,15 @@ class OnlineLoginPacketListener(
                 wRelaySession.serverBoundImmediately(loginPacket)
 
                 println("Login packet sent successfully")
+                WTrace.info(
+                    "login",
+                    "relayed login to the server ${System.currentTimeMillis() - chainStartedAt}ms after the " +
+                        "network settings exchange (chain + skin data fetch + signing)"
+                )
             } catch (e: Throwable) {
                 println("Login failed: ${e.message}")
                 e.printStackTrace()
+                WTrace.error("login", "authentication failed: ${e.message}")
                 wRelaySession.server.disconnect("Authentication failed: ${e.message}")
                 return true
             }
@@ -122,11 +140,13 @@ class OnlineLoginPacketListener(
                 
                 wRelaySession.client!!.enableEncryption(key)
                 println("Encryption enabled successfully")
+                WTrace.info("login", "derived the AES key from ServerToClientHandshake; ClientToServerHandshake sent")
 
                 wRelaySession.serverBoundImmediately(ClientToServerHandshakePacket())
             } catch (e: Exception) {
                 println("Handshake failed: ${e.message}")
                 e.printStackTrace()
+                WTrace.error("login", "ServerToClientHandshake handling failed: ${e.message}")
                 wRelaySession.server.disconnect("Handshake failed: ${e.message}")
                 return true
             }
@@ -175,13 +195,17 @@ class OnlineLoginPacketListener(
         }
 
         println("Session expired, attempting to refresh tokens...")
+        val startedAt = System.currentTimeMillis()
+        WTrace.warn("auth", "cached Xbox session expired; refreshing before the join can continue")
         return try {
             fullBedrockSession = fullBedrockSession.refresh()
             println("Successfully refreshed session for: ${fullBedrockSession.mcChain.displayName}")
+            WTrace.info("auth", "session refreshed in ${System.currentTimeMillis() - startedAt}ms, join can continue")
             true
         } catch (e: Exception) {
             println("Failed to refresh session: ${e.message}")
             e.printStackTrace()
+            WTrace.error("auth", "token refresh failed after ${System.currentTimeMillis() - startedAt}ms: ${e.message}")
             wRelaySession.server.disconnect(
                 "Your session has expired and could not be refreshed. Please re-login in the W Client."
             )

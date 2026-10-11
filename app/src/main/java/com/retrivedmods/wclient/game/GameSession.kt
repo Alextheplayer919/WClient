@@ -1,6 +1,6 @@
 package com.retrivedmods.wclient.game
 
-import android.util.Log
+import com.retrivedmods.wclient.util.WLog as Log
 import com.retrivedmods.wclient.application.AppContext
 import com.retrivedmods.wclient.game.entity.LocalPlayer
 import com.retrivedmods.wclient.game.registry.BlockMapping

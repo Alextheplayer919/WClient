@@ -7,6 +7,7 @@ import org.checkerframework.checker.nullness.qual.NonNull;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.data.PacketCompressionAlgorithm;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
+import org.cloudburstmc.protocol.bedrock.netty.trace.BedrockTrace;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.common.PacketSignal;
@@ -100,10 +101,18 @@ public abstract class BedrockSession {
             return;
         }
 
+        if (BedrockTrace.enabled()) {
+            BedrockTrace.log(BedrockTrace.LEVEL_INFO, "session", "session closed for "
+                    + this.getSocketAddress() + " subClient=" + this.subClientId
+                    + ", reason=" + this.disconnectReason);
+        }
+
         if (this.packetHandler != null) try {
             this.packetHandler.onDisconnect(this.disconnectReason);
         } catch (Exception e) {
             log.error("Exception thrown while handling disconnect", e);
+            BedrockTrace.log(BedrockTrace.LEVEL_ERROR, "session",
+                    "packet handler threw while handling disconnect: " + e, null);
         }
         this.peer.removeSession(this);
     }
@@ -116,9 +125,17 @@ public abstract class BedrockSession {
             if (log.isDebugEnabled()) {
                 log.debug("Received packet without a packet handler for {}:{}: {}", this.getSocketAddress(), this.subClientId, packet);
             }
+            BedrockTrace.log(BedrockTrace.LEVEL_WARN, "session",
+                    "packet " + packet.getClass().getSimpleName() + " arrived with no packet handler for "
+                            + this.getSocketAddress() + ":" + this.subClientId + " - dropped");
         } else if (this.packetHandler.handlePacket(packet) == PacketSignal.UNHANDLED) {
             if (log.isDebugEnabled()) {
                 log.debug("Unhandled packet for {}:{}: {}", this.getSocketAddress(), this.subClientId, packet);   
+            }
+            if (BedrockTrace.verbose()) {
+                BedrockTrace.verbose(BedrockTrace.LEVEL_TRACE, "session",
+                        "unhandled packet " + packet.getClass().getSimpleName() + " for "
+                                + this.getSocketAddress() + ":" + this.subClientId);
             }
         }
     }

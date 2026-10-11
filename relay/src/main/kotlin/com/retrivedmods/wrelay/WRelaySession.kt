@@ -1,6 +1,8 @@
 package com.retrivedmods.wrelay
 
 import com.retrivedmods.wrelay.listener.WRelayPacketListener
+import com.retrivedmods.wtrace.WPacketStats
+import com.retrivedmods.wtrace.WTrace
 import io.netty.util.internal.PlatformDependent
 import net.kyori.adventure.text.Component
 import org.cloudburstmc.netty.handler.codec.raknet.common.RakSessionCodec
@@ -48,6 +50,7 @@ class WRelaySession internal constructor(
                     }
                     if (processedCount > 0) {
                         println("Processed $processedCount queued packets")
+                        WTrace.info("relay", "upstream link up: flushed $processedCount queued packet(s) to the server")
                     }
                 } catch (e: Exception) {
                     println("Failed to initialize client session: ${e.message}")
@@ -93,6 +96,37 @@ class WRelaySession internal constructor(
     }
 
     /**
+     * One-line state of both links, for the console's periodic status line and the stall watchdog.
+     *
+     * "Upstream connected? / game client connected? / MTU of each / RTT / packets each way / how long
+     * since the last packet" is exactly the information needed to tell a dead upstream link from a
+     * stalled game link.
+     */
+    fun linkSnapshot(): String {
+        val upstream = runCatching {
+            val session = client ?: return@runCatching "upstream=connecting"
+            val mtu = runCatching { session.peer.channel.pipeline().get(RakSessionCodec::class.java)?.mtu }.getOrNull()
+            "upstream=connected(mtu=$mtu, rtt=${upstreamPingMs ?: "?"}ms)"
+        }.getOrElse { "upstream=unknown(${it.javaClass.simpleName})" }
+
+        val game = runCatching {
+            val mtu = server.peer.channel.pipeline().get(RakSessionCodec::class.java)?.mtu
+            "client=connected(mtu=$mtu)"
+        }.getOrElse { "client=unknown(${it.javaClass.simpleName})" }
+
+        val now = System.currentTimeMillis()
+        val lastToClient = stats.lastToClientMs().takeIf { it > 0L }?.let { "${now - it}ms ago" } ?: "never"
+        val lastToServer = stats.lastToServerMs().takeIf { it > 0L }?.let { "${now - it}ms ago" } ?: "never"
+
+        return "$upstream $game linkPackets=${stats.totalToServer()}↑/${stats.totalToClient()}↓ " +
+            "lastUp=$lastToServer lastDown=$lastToClient queued=${packetQueue.size}"
+    }
+
+    /** Packet counters of this session, shared with the console's packet panel. */
+    val stats: WPacketStats
+        get() = WTrace.stats
+
+    /**
      * True when the negotiated codec can encode [packet]. Pre-encoded [UnknownPacket]s are always
      * accepted. Packets missing from the codec (for example TickSync on protocol >= 685) would make
      * the Netty encoder throw, so callers should drop them instead of writing them.
@@ -110,6 +144,11 @@ class WRelaySession internal constructor(
 
     private fun dropUnsupported(packet: BedrockPacket) {
         println("Dropping unsupported packet ${packet.javaClass.simpleName}: not present in the negotiated codec")
+        WTrace.warn(
+            "relay",
+            "dropped ${packet.javaClass.simpleName}: the negotiated codec (protocol " +
+                "${client?.codec?.protocolVersion ?: server.codec.protocolVersion}) has no id for it"
+        )
     }
 
     fun clientBound(packet: BedrockPacket) {
@@ -117,6 +156,7 @@ class WRelaySession internal constructor(
             server.sendPacket(packet)
         } catch (e: Exception) {
             println("Failed to send packet to client: ${e.message}")
+            WTrace.error("relay", "failed to send ${packet.javaClass.simpleName} to the game client: ${e.message}")
         }
     }
 
@@ -125,6 +165,7 @@ class WRelaySession internal constructor(
             server.sendPacketImmediately(packet)
         } catch (e: Exception) {
             println("Failed to send packet immediately to client: ${e.message}")
+            WTrace.error("relay", "failed to send ${packet.javaClass.simpleName} to the game client immediately: ${e.message}")
         }
     }
 
@@ -138,12 +179,17 @@ class WRelaySession internal constructor(
                 client!!.sendPacket(packet)
             } catch (e: Exception) {
                 println("Failed to send packet to server: ${e.message}")
+                WTrace.error("relay", "failed to send ${packet.javaClass.simpleName} upstream: ${e.message}")
             }
         } else {
             if (packetQueue.size < maxQueueSize) {
                 packetQueue.add(packet to false)
+                // Packets queued before the upstream session exists are the join handshake: if this
+                // number grows while the console shows nothing else, the upstream connect is the stall.
+                WTrace.debug("relay", "queued ${packet.javaClass.simpleName} until the upstream link is up (queue=${packetQueue.size})")
             } else {
                 println("Packet queue full, dropping packet")
+                WTrace.error("relay", "packet queue full ($maxQueueSize), dropping ${packet.javaClass.simpleName}")
             }
         }
     }
@@ -175,6 +221,7 @@ class WRelaySession internal constructor(
             packetHandler = object : BedrockPacketHandler {
                 override fun onDisconnect(reason: CharSequence) {
                     println("Client disconnect: $reason")
+                    WTrace.warn("relay", "the game client disconnected from the relay: $reason")
                     runCatching {
                         client?.disconnect()
                     }
@@ -199,6 +246,12 @@ class WRelaySession internal constructor(
                         println("Before client bound error: ${e.message}")
                         e.printStackTrace()
                     }
+                }
+
+                // This packet passed every intercepting listener, so it is what actually crosses the
+                // relay: hand the raw wrapper to the trace listeners (exact size, packet id).
+                listeners.forEach { listener ->
+                    runCatching { listener.onPacketForwarded(wrapper, true) }
                 }
 
                 val buffer = wrapper.packetBuffer
@@ -234,6 +287,7 @@ class WRelaySession internal constructor(
 
                 override fun onDisconnect(reason: CharSequence) {
                     println("Server disconnect: $reason")
+                    WTrace.error("relay", "the upstream server closed the link: $reason")
                     runCatching {
                         server.disconnect(reason.toString())
                     }
@@ -259,6 +313,11 @@ class WRelaySession internal constructor(
                         println("Before server bound error: ${e.message}")
                         e.printStackTrace()
                     }
+                }
+
+                // Server -> game client, i.e. the traffic the player sees.
+                listeners.forEach { listener ->
+                    runCatching { listener.onPacketForwarded(wrapper, false) }
                 }
 
                 val buffer = wrapper.packetBuffer

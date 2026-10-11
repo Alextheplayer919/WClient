@@ -7,6 +7,7 @@ import io.netty.handler.codec.MessageToMessageEncoder;
 import io.netty.util.concurrent.FastThreadLocal;
 import lombok.RequiredArgsConstructor;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockBatchWrapper;
+import org.cloudburstmc.protocol.bedrock.netty.trace.BedrockTrace;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
@@ -38,6 +39,10 @@ public class BedrockEncryptionEncoder extends MessageToMessageEncoder<BedrockBat
 
     @Override
     protected void encode(ChannelHandlerContext ctx, BedrockBatchWrapper in, List<Object> out) throws Exception {
+        if (BedrockTrace.enabled() && this.packetCounter.get() == 0L) {
+            BedrockTrace.log(BedrockTrace.LEVEL_INFO, "encryption",
+                    "outbound link switched to encrypted frames (first batch " + in.getCompressed().readableBytes() + "B)");
+        }
         ByteBuf buf = ctx.alloc().ioBuffer(in.getCompressed().readableBytes() + 8);
         try {
             ByteBuffer trailer = ByteBuffer.wrap(generateTrailer(in.getCompressed(), this.key, this.packetCounter));

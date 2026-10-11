@@ -37,6 +37,7 @@ import org.cloudburstmc.netty.handler.codec.raknet.common.EncapsulatedToMessageH
 import org.cloudburstmc.netty.handler.codec.raknet.common.RakAcknowledgeHandler;
 import org.cloudburstmc.netty.handler.codec.raknet.common.RakDatagramCodec;
 import org.cloudburstmc.netty.handler.codec.raknet.common.RakSessionCodec;
+import org.cloudburstmc.netty.trace.RakTrace;
 import org.cloudburstmc.netty.util.RakUtils;
 
 import java.net.Inet6Address;
@@ -87,6 +88,21 @@ public class RakClientOfflineHandler extends SimpleChannelInboundHandler<ByteBuf
                 this.successPromise.tryFailure(future.cause());
             }
         });
+
+        if (RakTrace.enabled()) {
+            int[] sizes = this.rakChannel.config().getOption(RakChannelOption.RAK_MTU_SIZES);
+            StringBuilder ladder = new StringBuilder();
+            for (int i = 0; i < sizes.length; i++) {
+                if (i > 0) {
+                    ladder.append(" -> ");
+                }
+                ladder.append(sizes[i]);
+            }
+            RakTrace.log(RakTrace.LEVEL_INFO, "handshake", "offline handshake started with "
+                    + this.rakChannel.remoteAddress() + " (connectTimeout=" + timeout
+                    + "ms, retryEvery=" + this.rakChannel.config().getOption(RakChannelOption.RAK_TIME_BETWEEN_SEND_CONNECTION_ATTEMPTS_MS)
+                    + "ms, mtuLadder=" + ladder + ")");
+        }
     }
 
     @Override
@@ -108,6 +124,12 @@ public class RakClientOfflineHandler extends SimpleChannelInboundHandler<ByteBuf
     }
 
     private void onTimeout() {
+        if (RakTrace.enabled()) {
+            RakTrace.log(RakTrace.LEVEL_ERROR, "handshake", "no reply from " + this.rakChannel.remoteAddress()
+                    + " within the connect timeout after " + this.connectionAttempts
+                    + " Request1 attempt(s), state=" + this.state
+                    + "; RakNet handshake failed (server unreachable, filtered, or MTU probes dropped)");
+        }
         this.successPromise.tryFailure(new ConnectTimeoutException());
     }
 
@@ -141,6 +163,11 @@ public class RakClientOfflineHandler extends SimpleChannelInboundHandler<ByteBuf
         short packetId = buf.readUnsignedByte();
         ByteBuf magicBuf = this.rakChannel.config().getOption(RakChannelOption.RAK_UNCONNECTED_MAGIC);
         if (!buf.isReadable(magicBuf.readableBytes()) || !ByteBufUtil.equals(buf.readSlice(magicBuf.readableBytes()), magicBuf)) {
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_ERROR, "handshake", "unconnected reply with a bad RakMagic from "
+                        + this.rakChannel.remoteAddress() + " (packet id 0x" + Integer.toHexString(packetId)
+                        + ") - not a RakNet/Bedrock endpoint, or a middlebox rewrote it");
+            }
             this.successPromise.tryFailure(new CorruptedFrameException("RakMagic does not match"));
             return;
         }
@@ -155,20 +182,41 @@ public class RakClientOfflineHandler extends SimpleChannelInboundHandler<ByteBuf
                 return;
             case ID_INCOMPATIBLE_PROTOCOL_VERSION:
                 this.rakChannel.pipeline().fireUserEventTriggered(RakDisconnectReason.INCOMPATIBLE_PROTOCOL_VERSION);
+                if (RakTrace.enabled()) {
+                    RakTrace.log(RakTrace.LEVEL_ERROR, "handshake", "server rejected the RakNet version "
+                            + this.rakChannel.config().getOption(RakChannelOption.RAK_PROTOCOL_VERSION)
+                            + " (ID_INCOMPATIBLE_PROTOCOL_VERSION)");
+                }
                 this.successPromise.tryFailure(new IllegalStateException("Incompatible raknet version"));
                 return;
             case ID_ALREADY_CONNECTED:
                 this.rakChannel.pipeline().fireUserEventTriggered(RakDisconnectReason.ALREADY_CONNECTED);
+                if (RakTrace.enabled()) {
+                    RakTrace.log(RakTrace.LEVEL_ERROR, "handshake", "server says this GUID is already connected "
+                            + "(ID_ALREADY_CONNECTED); clear the relay and retry");
+                }
                 this.successPromise.tryFailure(new ChannelException("Already connected"));
                 return;
             case ID_NO_FREE_INCOMING_CONNECTIONS:
                 this.rakChannel.pipeline().fireUserEventTriggered(RakDisconnectReason.NO_FREE_INCOMING_CONNECTIONS);
+                if (RakTrace.enabled()) {
+                    RakTrace.log(RakTrace.LEVEL_ERROR, "handshake", "server has no free incoming connections");
+                }
                 this.successPromise.tryFailure(new ChannelException("No free incoming connections"));
                 return;
             case ID_IP_RECENTLY_CONNECTED:
                 this.rakChannel.pipeline().fireUserEventTriggered(RakDisconnectReason.IP_RECENTLY_CONNECTED);
+                if (RakTrace.enabled()) {
+                    RakTrace.log(RakTrace.LEVEL_WARN, "handshake", "server recently saw this public IP "
+                            + "(ID_IP_RECENTLY_CONNECTED) - wait a few seconds and retry");
+                }
                 this.successPromise.tryFailure(new ChannelException("Address recently connected"));
                 return;
+        }
+
+        if (RakTrace.verbose()) {
+            RakTrace.verbose(RakTrace.LEVEL_TRACE, "handshake", "unhandled offline packet id 0x"
+                    + Integer.toHexString(packetId) + " while state=" + this.state);
         }
     }
 
@@ -184,6 +232,11 @@ public class RakClientOfflineHandler extends SimpleChannelInboundHandler<ByteBuf
         this.rakChannel.config().setOption(RakChannelOption.RAK_MTU, mtu);
         this.rakChannel.config().setOption(RakChannelOption.RAK_REMOTE_GUID, serverGuid);
 
+        if (RakTrace.enabled()) {
+            RakTrace.log(RakTrace.LEVEL_INFO, "handshake", "Reply1 after " + (this.connectionAttempts + 1)
+                    + " attempt(s): server accepted MTU " + mtu + "B" + (security ? " (with security cookie)" : ""));
+        }
+
         this.state = RakOfflineState.HANDSHAKE_2;
         this.sendOpenConnectionRequest2(ctx.channel());
     }
@@ -198,17 +251,29 @@ public class RakClientOfflineHandler extends SimpleChannelInboundHandler<ByteBuf
         int mtu = buffer.readShort();
         boolean security = buffer.readBoolean(); // security
         if (security) {
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_ERROR, "handshake", "server demanded encryption on the offline handshake, "
+                        + "which this transport does not implement");
+            }
             this.successPromise.tryFailure(new SecurityException());
             return;
         }
 
         this.rakChannel.config().setOption(RakChannelOption.RAK_MTU, mtu);
         this.state = RakOfflineState.HANDSHAKE_COMPLETED;
+        if (RakTrace.enabled()) {
+            RakTrace.log(RakTrace.LEVEL_INFO, "handshake", "Reply2: session MTU " + mtu
+                    + "B after " + (this.connectionAttempts + 1) + " Request1 attempt(s); RakNet handshake complete");
+        }
     }
 
     private void sendOpenConnectionRequest1(Channel channel) {
         int mtuSizeIndex = Math.min(this.connectionAttempts / 4, this.rakChannel.config().getOption(RakChannelOption.RAK_MTU_SIZES).length - 1);
         int mtuSize = this.rakChannel.config().getOption(RakChannelOption.RAK_MTU_SIZES)[mtuSizeIndex];
+        if (RakTrace.verbose()) {
+            RakTrace.verbose(RakTrace.LEVEL_TRACE, "handshake", "Request1 #" + (this.connectionAttempts + 1)
+                    + " probing MTU " + mtuSize + "B");
+        }
 
         ByteBuf magicBuf = this.rakChannel.config().getOption(RakChannelOption.RAK_UNCONNECTED_MAGIC);
         int rakVersion = this.rakChannel.config().getOption(RakChannelOption.RAK_PROTOCOL_VERSION);

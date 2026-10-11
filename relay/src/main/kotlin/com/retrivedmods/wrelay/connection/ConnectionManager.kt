@@ -6,6 +6,7 @@ import com.retrivedmods.wrelay.address.inetSocketAddress
 import com.retrivedmods.wrelay.client.ClientIdentification
 import com.retrivedmods.wrelay.config.EnhancedServerConfig
 import com.retrivedmods.wrelay.util.ServerCompatUtils
+import com.retrivedmods.wtrace.WTrace
 import io.netty.bootstrap.Bootstrap
 import io.netty.channel.Channel
 import io.netty.channel.ChannelFuture
@@ -69,10 +70,18 @@ class ConnectionManager(
         isConnecting = true
         
         try {
+            val startedAt = System.currentTimeMillis()
             val isProtected = ServerCompatUtils.isProtectedServer(remoteAddress)
             val config = if (isProtected) serverConfig else EnhancedServerConfig.FAST
-            
+
             println("Connecting to ${remoteAddress.hostName}:${remoteAddress.port} (Protected: $isProtected)")
+            WTrace.info(
+                "connect",
+                "connecting to ${remoteAddress.hostName}:${remoteAddress.port} (protected=$isProtected, " +
+                    "attempts=${config.maxRetryAttempts}, connectTimeout=${config.connectionTimeout}ms, " +
+                    "sessionTimeout=${config.sessionTimeout}ms, handshakeRetry=${HANDSHAKE_RETRY_MS}ms)"
+            )
+            resolveHost(remoteAddress.hostName)
 
             if (isProtected && config.enableConnectionThrottling) {
                 applyConnectionThrottling(remoteAddress.hostName, config)
@@ -86,16 +95,33 @@ class ConnectionManager(
             var lastException: Exception? = null
             
             for (attempt in 0 until config.maxRetryAttempts) {
+                val attemptStartedAt = System.currentTimeMillis()
                 try {
                     println("Connection attempt ${attempt + 1}/${config.maxRetryAttempts}")
-                    
+                    WTrace.info(
+                        "connect",
+                        "attempt ${attempt + 1}/${config.maxRetryAttempts} to ${remoteAddress.hostName}:" +
+                            "${remoteAddress.port} (${System.currentTimeMillis() - startedAt}ms since connect started)"
+                    )
+
                     val clientSession = attemptConnection(remoteAddress, config, onSessionCreated)
                     println("Successfully connected to ${remoteAddress.hostName}:${remoteAddress.port}")
+                    WTrace.info(
+                        "connect",
+                        "UPSTREAM LINK UP after ${System.currentTimeMillis() - attemptStartedAt}ms " +
+                            "(attempt ${attempt + 1}/${config.maxRetryAttempts}, total " +
+                            "${System.currentTimeMillis() - startedAt}ms)"
+                    )
                     return@withContext Result.success(clientSession)
-                    
+
                 } catch (e: Exception) {
                     lastException = e
                     println("Connection attempt ${attempt + 1} failed: ${describe(e)}")
+                    WTrace.error(
+                        "connect",
+                        "attempt ${attempt + 1}/${config.maxRetryAttempts} failed after " +
+                            "${System.currentTimeMillis() - attemptStartedAt}ms: ${describe(e)}"
+                    )
 
                     if (shouldNotRetry(e)) {
                         break
@@ -104,11 +130,19 @@ class ConnectionManager(
                     if (attempt < config.maxRetryAttempts - 1) {
                         val retryDelay = config.calculateRetryDelay(attempt)
                         println("Retrying in ${retryDelay}ms...")
+                        WTrace.warn("connect", "retrying in ${retryDelay}ms")
                         delay(retryDelay)
                     }
                 }
             }
-            
+
+            WTrace.error(
+                "connect",
+                "gave up on ${remoteAddress.hostName}:${remoteAddress.port} after " +
+                    "${System.currentTimeMillis() - startedAt}ms and ${config.maxRetryAttempts} attempt(s): " +
+                    describe(lastException ?: Exception("unknown"))
+            )
+
             Result.failure(lastException ?: Exception("Connection failed after ${config.maxRetryAttempts} attempts"))
             
         } finally {
@@ -185,6 +219,7 @@ class ConnectionManager(
 
         if (eventLoopGroup == null || eventLoopGroup!!.isShuttingDown || eventLoopGroup!!.isShutdown) {
             eventLoopGroup = NioEventLoopGroup()
+            WTrace.net("connect", "created a fresh Netty event loop group for the upstream link")
         }
         
         val bootstrap = Bootstrap()
@@ -227,16 +262,27 @@ class ConnectionManager(
         val timeoutJob = CoroutineScope(Dispatchers.IO).launch {
             delay(config.connectionTimeout + 10000)
             if (!continuation.isCompleted) {
+                WTrace.error(
+                    "connect",
+                    "no Bedrock session after ${config.connectionTimeout + 10000}ms " +
+                        "(connect timeout ${config.connectionTimeout}ms + grace) - the RakNet handshake never " +
+                        "completed; the game will report a join timeout"
+                )
                 connectFuture.cancel(true)
                 continuation.resumeWithException(Exception("Connection timeout after ${config.connectionTimeout + 10000}ms"))
             }
         }
-        
+
         connectFuture.addListener { future ->
             timeoutJob.cancel()
             if (!future.isSuccess && !continuation.isCompleted) {
+                val cause = future.cause()
+                WTrace.error(
+                    "connect",
+                    "upstream connect failed: " + describe(cause as? Exception ?: Exception("unknown cause"))
+                )
                 continuation.resumeWithException(
-                    future.cause() ?: Exception("Connection failed for unknown reason")
+                    cause ?: Exception("Connection failed for unknown reason")
                 )
             }
         }
@@ -244,6 +290,28 @@ class ConnectionManager(
         continuation.invokeOnCancellation {
             timeoutJob.cancel()
             connectFuture.cancel(true)
+        }
+    }
+
+    /**
+     * Resolves the upstream hostname up front and reports how long it took.
+     *
+     * RakNet would resolve it inside the connect future, where a slow resolver just looks like a slow
+     * handshake; doing it here separates "the name took 4s to resolve" from "the server never answered".
+     */
+    private fun resolveHost(hostName: String) {
+        val started = System.nanoTime()
+        runCatching {
+            val addresses = java.net.InetAddress.getAllByName(hostName)
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000
+            WTrace.net(
+                "dns",
+                "resolved $hostName to ${addresses.joinToString(", ") { it.hostAddress }} in ${elapsedMs}ms",
+                if (elapsedMs > 1_000) com.retrivedmods.wtrace.WLevel.WARN else com.retrivedmods.wtrace.WLevel.INFO
+            )
+        }.onFailure {
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000
+            WTrace.error("dns", "could not resolve $hostName after ${elapsedMs}ms: ${describe(it as? Exception ?: Exception(it))}")
         }
     }
 

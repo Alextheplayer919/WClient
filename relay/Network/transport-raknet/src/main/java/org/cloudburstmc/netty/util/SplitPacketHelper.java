@@ -53,6 +53,11 @@ public class SplitPacketHelper extends AbstractReferenceCounted {
         return this.partId == packet.getPartId() && this.packets.length == packet.getPartCount();
     }
 
+    /** Split ID this reassembly belongs to, for the console's alias diagnostics. */
+    public int getPartId() {
+        return this.partId;
+    }
+
     public EncapsulatedPacket add(EncapsulatedPacket packet, ByteBufAllocator alloc) {
         Objects.requireNonNull(packet, "packet cannot be null");
         if (!packet.isSplit()) throw new IllegalArgumentException("Packet is not split");

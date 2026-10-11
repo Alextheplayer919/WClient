@@ -38,6 +38,7 @@ import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 import org.cloudburstmc.netty.channel.raknet.packet.EncapsulatedPacket;
 import org.cloudburstmc.netty.channel.raknet.packet.RakDatagramPacket;
 import org.cloudburstmc.netty.channel.raknet.packet.RakMessage;
+import org.cloudburstmc.netty.trace.RakTrace;
 import org.cloudburstmc.netty.util.BitQueue;
 import org.cloudburstmc.netty.util.FastBinaryMinHeap;
 import org.cloudburstmc.netty.util.IntRange;
@@ -226,7 +227,13 @@ public class RakSessionCodec extends ChannelDuplexHandler {
         }
 
         try {
-            this.send(ctx, (RakMessage) msg);
+            RakMessage rakMessage = (RakMessage) msg;
+            if (RakTrace.verbose()) {
+                RakTrace.verbose(RakTrace.LEVEL_TRACE, "session", "write " + rakMessage.content().readableBytes()
+                        + "B reliability=" + rakMessage.reliability() + " channel=" + rakMessage.channel()
+                        + " priority=" + rakMessage.priority() + " thread=" + Thread.currentThread().getName());
+            }
+            this.send(ctx, rakMessage);
             promise.setSuccess(null);
         } finally {
             ReferenceCountUtil.release(msg);
@@ -313,9 +320,19 @@ public class RakSessionCodec extends ChannelDuplexHandler {
         int missedDatagrams = packet.getSequenceIndex() - prevSequenceIndex;
         if (missedDatagrams > 0) {
             this.outgoingNaks.offer(new IntRange(packet.getSequenceIndex() - missedDatagrams, packet.getSequenceIndex() - 1));
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_WARN, "datagram", "gap of " + missedDatagrams
+                        + " datagram(s) before #" + packet.getSequenceIndex() + " -> NACK queued");
+            }
         }
 
         this.outgoingAcks.offer(new IntRange(packet.getSequenceIndex(), packet.getSequenceIndex()));
+
+        if (RakTrace.verbose()) {
+            RakTrace.verbose(RakTrace.LEVEL_TRACE, "datagram", "in #" + packet.getSequenceIndex()
+                    + " packets=" + packet.getPackets().size() + " size=" + packet.getSize()
+                    + "B windowDatagramReadIndex=" + this.datagramReadIndex);
+        }
 
         for (final EncapsulatedPacket encapsulated : packet.getPackets()) {
             if (encapsulated.getReliability().isReliable()) {
@@ -323,6 +340,11 @@ public class RakSessionCodec extends ChannelDuplexHandler {
                 if (missed >= MAX_RECEIVE_GAP) {
                     // A gap this large is either a hostile peer or a lost-and-never-resent index; both would grow
                     // reliableDatagramQueue forever while every ordered channel behind it waits.
+                    if (RakTrace.enabled()) {
+                        RakTrace.log(RakTrace.LEVEL_ERROR, "reliable", "reliable index " + encapsulated.getReliabilityIndex()
+                                + " is " + missed + " ahead of the read index " + this.reliabilityReadIndex
+                                + " (limit " + MAX_RECEIVE_GAP + "); peer lost and never resent, disconnecting BAD_PACKET");
+                    }
                     this.disconnect(RakDisconnectReason.BAD_PACKET);
                     return;
                 } else if (missed > 0) {
@@ -358,10 +380,21 @@ public class RakSessionCodec extends ChannelDuplexHandler {
             }
 
             if (encapsulated.isSplit()) {
+                if (RakTrace.enabled()) {
+                    RakTrace.log(RakTrace.LEVEL_TRACE, "split", "part " + (encapsulated.getPartIndex() + 1) + "/"
+                            + encapsulated.getPartCount() + " id=" + encapsulated.getPartId()
+                            + " (" + encapsulated.getBuffer().readableBytes() + "B), reassembly holding "
+                            + this.splitQueuedBytes + "B");
+                }
                 final EncapsulatedPacket reassembled = this.getReassembledPacket(encapsulated, ctx.alloc());
                 if (reassembled == null) {
                     // Not reassembled
                     continue;
+                }
+                if (RakTrace.enabled()) {
+                    RakTrace.log(RakTrace.LEVEL_TRACE, "split", "reassembled id=" + encapsulated.getPartId()
+                            + " from " + encapsulated.getPartCount() + " parts -> "
+                            + reassembled.getBuffer().readableBytes() + "B");
                 }
                 if (metrics != null) {
                     metrics.encapsulatedIn(1);
@@ -393,6 +426,11 @@ public class RakSessionCodec extends ChannelDuplexHandler {
         int distance = packet.getOrderingIndex() - this.orderReadIndex[packet.getOrderingChannel()];
         if (distance >= MAX_RECEIVE_GAP) {
             // Same as the reliable gap above: an ordering channel may not be made to buffer indefinitely.
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_ERROR, "ordering", "ordered channel " + packet.getOrderingChannel()
+                        + " is " + distance + " indices ahead of the read index (limit " + MAX_RECEIVE_GAP
+                        + "), holding " + this.orderingQueuedBytes + "B; disconnecting BAD_PACKET");
+            }
             this.disconnect(RakDisconnectReason.BAD_PACKET);
             return;
         } else if (distance > 0) {
@@ -437,6 +475,12 @@ public class RakSessionCodec extends ChannelDuplexHandler {
             // Part IDs are only unique modulo the size of this array, so an unrelated split packet may
             // hold the slot. Drop the part rather than corrupt a reassembly that is still in progress.
             if (!helper.expired()) {
+                if (RakTrace.enabled()) {
+                    RakTrace.log(RakTrace.LEVEL_WARN, "split", "part id " + partId + " from partId "
+                            + splitPacket.getPartId() + " (partCount " + splitPacket.getPartCount()
+                            + ") landed on an unfinished reassembly for partId " + helper.getPartId()
+                            + " - part dropped");
+                }
                 return null;
             }
             helper = null; // Released below when set() overwrites it.
@@ -465,12 +509,19 @@ public class RakSessionCodec extends ChannelDuplexHandler {
      */
     private void evictExpiredSplitPackets() {
         Iterator<SplitPacketHelper> iterator = this.splitPackets.iterator();
+        int evicted = 0;
         while (iterator.hasNext()) {
             SplitPacketHelper helper = iterator.next();
             if (helper != null && helper.expired()) {
                 this.splitQueuedBytes -= helper.getReassembledSize();
                 iterator.remove();
+                evicted++;
             }
+        }
+        if (evicted > 0 && RakTrace.enabled()) {
+            RakTrace.log(RakTrace.LEVEL_WARN, "split", "gave up on " + evicted
+                    + " incomplete reassembly/reassemblies (30s without the remaining parts); "
+                    + this.splitQueuedBytes + "B still held");
         }
     }
 
@@ -494,6 +545,10 @@ public class RakSessionCodec extends ChannelDuplexHandler {
                 for (EncapsulatedPacket packet : this.outgoingPackets) {
                     queuedBytes += packet.getBuffer().readableBytes();
                     if (queuedBytes > maxQueuedBytes) {
+                        if (RakTrace.enabled()) {
+                            RakTrace.log(RakTrace.LEVEL_ERROR, "session", "outgoing queue over budget ("
+                                    + queuedBytes + "B > " + maxQueuedBytes + "B); disconnecting with QUEUE_TOO_LONG");
+                        }
                         this.disconnect(RakDisconnectReason.QUEUE_TOO_LONG);
                         return;
                     }
@@ -514,6 +569,10 @@ public class RakSessionCodec extends ChannelDuplexHandler {
         if (maxSplitQueuedBytes > 0 && this.splitQueuedBytes > maxSplitQueuedBytes) {
             log.warn("[{}] Split reassembly holding {} bytes, over the {} byte limit; closing session",
                     this.getRemoteAddress(), this.splitQueuedBytes, maxSplitQueuedBytes);
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_ERROR, "split", "reassembly holding " + this.splitQueuedBytes
+                        + "B, over the " + maxSplitQueuedBytes + "B limit; closing session (peer withheld parts)");
+            }
             this.disconnect(RakDisconnectReason.SPLIT_QUEUE_TOO_LONG);
             return;
         }
@@ -522,18 +581,31 @@ public class RakSessionCodec extends ChannelDuplexHandler {
         if (maxOrderingQueuedBytes > 0 && this.orderingQueuedBytes > maxOrderingQueuedBytes) {
             log.warn("[{}] Ordering buffers holding {} bytes, over the {} byte limit; closing session",
                     this.getRemoteAddress(), this.orderingQueuedBytes, maxOrderingQueuedBytes);
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_ERROR, "ordering", "ordering buffers holding " + this.orderingQueuedBytes
+                        + "B, over the " + maxOrderingQueuedBytes + "B limit; closing session (an ordered channel is stuck)");
+            }
             this.disconnect(RakDisconnectReason.ORDERING_QUEUE_TOO_LONG);
             return;
         }
 
         if (this.state == RakState.UNCONNECTED) {
             if (this.isTimedOut(curTime)) {
+                if (RakTrace.enabled()) {
+                    RakTrace.log(RakTrace.LEVEL_INFO, "session", "session timeout while still UNCONNECTED; closing");
+                }
                 this.close(RakDisconnectReason.TIMED_OUT);
             }
             return;
         }
 
         if (this.isTimedOut(curTime)) {
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_WARN, "session", "no traffic for "
+                        + (curTime - this.lastTouched) + "ms (timeout "
+                        + this.channel.config().getOption(RakChannelOption.RAK_SESSION_TIMEOUT)
+                        + "ms); disconnecting with TIMED_OUT");
+            }
             this.disconnect(RakDisconnectReason.TIMED_OUT);
             return;
         }
@@ -635,6 +707,10 @@ public class RakSessionCodec extends ChannelDuplexHandler {
         if (log.isTraceEnabled()) {
             log.trace("NAK'ed datagram {} from {}", datagram.getSequenceIndex(), this.getRemoteAddress());
         }
+        if (RakTrace.enabled()) {
+            RakTrace.log(RakTrace.LEVEL_WARN, "datagram", "NACK for #" + datagram.getSequenceIndex()
+                    + " (" + datagram.getSize() + "B) from " + this.getRemoteAddress() + " - resending");
+        }
 
         this.slidingWindow.onNak(); // TODO: verify this
         this.sendDatagram(ctx, datagram, curTime);
@@ -670,6 +746,11 @@ public class RakSessionCodec extends ChannelDuplexHandler {
 
         if (hasResent) {
             this.slidingWindow.onResend(curTime);
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_DEBUG, "datagram", "retransmitting " + resendCount
+                        + " unacknowledged datagram(s) to " + this.getRemoteAddress()
+                        + " (rtt=" + Math.round(this.getRTT()) + "ms)");
+            }
         }
 
         return resendCount;
@@ -728,6 +809,10 @@ public class RakSessionCodec extends ChannelDuplexHandler {
         if (!this.channel.parent().eventLoop().inEventLoop()) {
             // Make sure this runs on correct thread
             log.error("Tried to send datagrams from wrong thread: {}", Thread.currentThread().getName(), new Throwable());
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_WARN, "session", "datagram write attempted from wrong thread ("
+                        + Thread.currentThread().getName() + "), re-dispatched onto the event loop");
+            }
             this.channel.parent().eventLoop().execute(() -> this.sendDatagram(ctx, datagram, time));
             return;
         }
@@ -756,6 +841,11 @@ public class RakSessionCodec extends ChannelDuplexHandler {
                 this.sentDatagrams.put(datagram.getSequenceIndex(), datagram.retain()); // Keep for resending
                 break;
             }
+        }
+        if (RakTrace.verbose()) {
+            RakTrace.verbose(RakTrace.LEVEL_TRACE, "datagram", "out #" + datagram.getSequenceIndex()
+                    + " packets=" + datagram.getPackets().size() + " size=" + datagram.getSize()
+                    + "B rto=" + (datagram.getNextSend() - time) + "ms");
         }
         ctx.write(datagram);
     }
@@ -797,8 +887,24 @@ public class RakSessionCodec extends ChannelDuplexHandler {
                                 "can take at MTU {} ({} bytes per part). Dropping it keeps the ordering channel alive.",
                         this.getRemoteAddress(), buffer.readableBytes(), split, MAXIMUM_SPLIT_COUNT, this.getMtu(),
                         this.getMtu() - MAXIMUM_ENCAPSULATED_HEADER_SIZE - RAKNET_DATAGRAM_HEADER_SIZE);
+                if (RakTrace.enabled()) {
+                    RakTrace.log(RakTrace.LEVEL_ERROR, "split", "REFUSING " + buffer.readableBytes()
+                            + "B message: needs " + split + " parts, peer allows " + MAXIMUM_SPLIT_COUNT
+                            + " at MTU " + this.getMtu() + " (" + partSize(this.getMtu()) + "B per part). Message dropped,"
+                            + " ordering channel kept alive - expect missing chunk/entity data, not a freeze.");
+                }
                 throw new IllegalArgumentException("Message of " + buffer.readableBytes() + " bytes needs " + split
                         + " parts, more than the " + MAXIMUM_SPLIT_COUNT + " allowed");
+            }
+            // Chunk payloads split constantly; only large splits are worth a line by default, the rest
+            // wait for datagram-level tracing so a normal chunk stream does not fill the console.
+            if (split >= 32 && RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_TRACE, "split", "sending " + buffer.readableBytes() + "B as " + split
+                        + " parts at MTU " + this.getMtu() + " (" + maxLength + "B per part, channel "
+                        + orderingChannel + ")");
+            } else if (RakTrace.verbose()) {
+                RakTrace.verbose(RakTrace.LEVEL_TRACE, "split", "sending " + buffer.readableBytes() + "B as " + split
+                        + " parts at MTU " + this.getMtu() + " (channel " + orderingChannel + ")");
             }
             buffer.retain(split);
 
@@ -887,6 +993,12 @@ public class RakSessionCodec extends ChannelDuplexHandler {
         if (log.isDebugEnabled()) {
             log.debug("Disconnecting RakNet Session ({} => {}) due to {}", this.channel.localAddress(), this.getRemoteAddress(), reason);
         }
+        if (RakTrace.enabled()) {
+            RakTrace.log(RakTrace.LEVEL_INFO, "session", "disconnecting " + this.getRemoteAddress()
+                    + " due to " + reason + " (mtu=" + this.getMtu() + ", rtt=" + Math.round(this.getRTT())
+                    + "ms, splitQueued=" + this.splitQueuedBytes + "B, orderingQueued=" + this.orderingQueuedBytes
+                    + "B)");
+        }
 
         ChannelHandlerContext ctx = this.ctx();
 
@@ -909,6 +1021,10 @@ public class RakSessionCodec extends ChannelDuplexHandler {
 
         if (log.isDebugEnabled()) {
             log.debug("Closing RakNet Session ({} => {}) due to {}", this.channel.localAddress(), this.getRemoteAddress(), reason);
+        }
+        if (RakTrace.enabled()) {
+            RakTrace.log(RakTrace.LEVEL_INFO, "session", "closing session with " + this.getRemoteAddress()
+                    + " due to " + reason);
         }
 
         this.channel.pipeline().fireUserEventTriggered(reason).close();

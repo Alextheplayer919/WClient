@@ -7,6 +7,7 @@ import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockBatchWrapper;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
+import org.cloudburstmc.protocol.bedrock.netty.trace.BedrockTrace;
 import org.cloudburstmc.protocol.common.util.VarInts;
 
 import java.util.ArrayDeque;
@@ -37,6 +38,7 @@ public class BedrockBatchEncoder extends ChannelOutboundHandlerAdapter {
             return;
         }
 
+        int batchedPackets = messages.size();
         CompositeByteBuf buf = ctx.alloc().compositeDirectBuffer(messages.size() * 2);
         BedrockBatchWrapper batch = BedrockBatchWrapper.newInstance();
 
@@ -58,6 +60,17 @@ public class BedrockBatchEncoder extends ChannelOutboundHandlerAdapter {
             }
 
             batch.setUncompressed(buf.retain());
+
+            if (BedrockTrace.enabled()) {
+                int bytes = buf.readableBytes();
+                // This is the size the transport will have to split (and may refuse). Anything in the
+                // hundreds of KiB is a chunk batch and is worth a line even without verbose tracing.
+                if (bytes >= 65536 || BedrockTrace.verbose()) {
+                    BedrockTrace.log(BedrockTrace.LEVEL_TRACE, "batch",
+                            "batch out: " + batchedPackets + " packet(s), " + bytes + "B uncompressed");
+                }
+            }
+
             ctx.write(batch.retain());
         } finally {
             buf.release();
