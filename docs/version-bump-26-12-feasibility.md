@@ -199,9 +199,9 @@ updated, **79** added, **6** files touched in `app/` + `relay/src`.
 * Checked mechanically afterwards: 0 conflict markers, 1241 `.java` files scanned with **0 unresolved**
   `org.cloudburstmc.protocol.*` imports (specific and wildcard), no enum constant present in HEAD
   disappeared, and no member removed by the update is referenced from `app/` or `relay/src`
-  (`World.kt:143 chunkX` is the app's own `LevelChunkPacket`, not the vendored packet). `java.awt` and
-  slf4j look alarming on Android but are already used by 18 and 2 pre-existing files that build green,
-  so no build-file change was needed.
+  (`World.kt:143 chunkX` is the app's own `LevelChunkPacket`, not the vendored packet). `java.awt` was a
+  non-issue: 18 pre-existing files in this module already import it and build green. slf4j was not - see
+  "Verified in CI" below.
 * The vendored tree differs from upstream@`01a2b1be` in 278 files, and only **9** of those differ for a
   reason other than the `private`→`public` field sweep. That short list is the real contract with
   upstream, and each one was checked against the new codecs: `PlayerListPacket` + its `v800` serializer
@@ -217,11 +217,35 @@ updated, **79** added, **6** files touched in `app/` + `relay/src`.
 
 * Latent bug fixed on the way: `CodecRegistry.getClosestCodec` used `findLast` on a **descending**
   list, so any unregistered protocol (950, 975, 900) got the **291 / 1.2.0** codec. Now `firstOrNull`,
-  pinned by `relay/src/test/kotlin/com/retrivedmods/wrelay/codec/CodecRegistryTest.kt` — the first test
-  in this repo that Gradle actually runs. Failed codec loads are recorded in
+  pinned by `relay/src/test/kotlin/com/retrivedmods/wrelay/codec/CodecRegistryTest.kt` — the relay
+  module's first unit test. Failed codec loads are recorded in
   `CodecRegistry.unregisteredProtocols` and printed to stderr instead of only `println`-ing.
 
+### Verified in CI (green at `3ba25d5`)
+
+`:app:assembleDebug` compiles the whole port, and CI now runs the unit tests too: `relay` 6 tests,
+`relay/Network/transport-raknet` 78 tests (RakTests 72, SplitPacketHelperTests 5, BitQueueTests 1) -
+the raknet ones are executing for the first time ever, because that module declared JUnit 5 tests
+without `useJUnitPlatform()`. Two build fixes were needed to get there, both real:
+
+* `bedrock-codec` now declares `org.slf4j:slf4j-api` - it uses slf4j directly and only linked by
+  accident when something else dragged it in.
+* Both test modules declare `junit-platform-launcher` in `testRuntimeOnly`; Gradle 8.13 does not
+  supply one that matches the platform on the classpath, and a missing launcher means the test task
+  fails (or silently runs nothing) rather than running the tests.
+* `CodecRegistry.registerCodec` catches `Throwable` and records `unregisteredReasons` with the cause
+  unwrapped from `ExceptionInInitializerError`. That turned "Could not initialize class CodecRegistry"
+  into the actual bug: `Bedrock_v924` calls `updateSerializer(ClientboundDataStorePacket.class, ...)`,
+  which the codec builder rejects with "Packet does not exist" unless an ancestor registers the packet -
+  and the vendored tree had pruned that registration out of `Bedrock_v898`. Restoring upstream's line
+  (id 330, unused locally) fixed 924 and, through inheritance, 944.
+
+What CI does **not** prove: that a 26.12 client plays correctly end to end. It proves the codecs load,
+negotiate 944 exactly, and fall back sanely. Everything below is still open.
+
 ### Still missing — assets, not code
+
+
 
 * `relay/src/main/resources/nbt/block_palette.nbt` is still the 1.21.11x-era table. Joining a 944
   server works; block packet correctness against a *modern* palette does not.
