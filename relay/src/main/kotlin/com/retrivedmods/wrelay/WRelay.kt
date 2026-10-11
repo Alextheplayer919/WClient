@@ -77,7 +77,7 @@ class WRelay(
             "relay",
             "starting relay: listening on ${localAddress.hostName}:${localAddress.port}, forwarding to " +
                 "${remoteAddress.hostName}:${remoteAddress.port}, advertised version " +
-                "${advertisement.version} (protocol ${advertisement.protocolVersion})"
+                "${advertisement.version()} (protocol ${advertisement.protocolVersion()})"
         )
 
         if (ServerCompatUtils.isProtectedServer(remoteAddress)) {

@@ -184,7 +184,6 @@ object ConsoleRuntime {
         WTrace.info("console", "console reports are written to ${ConsoleReport.reportDirectory(context).absolutePath}")
         WTraceDiagnostics.logInterfaces()
         WTraceDiagnostics.checkLocalPort(19132)
-        WTraceDiagnostics.reachability(java.net.InetAddress.getLocalHost().hostName, 19132, 300)
 
         val target = runCatching {
             com.retrivedmods.wclient.model.CaptureModeModel.from(
@@ -195,6 +194,7 @@ object ConsoleRuntime {
         if (target != null) {
             WTrace.info("boot", "configured target: ${target.serverHostName}:${target.serverPort}")
             WTraceDiagnostics.resolve(target.serverHostName, target.serverPort)
+            WTraceDiagnostics.reachability(target.serverHostName, target.serverPort)
         } else {
             WTrace.warn("boot", "no configured server yet (Settings/Server page); DNS probe skipped")
         }

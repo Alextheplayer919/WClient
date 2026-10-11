@@ -43,7 +43,7 @@ object WTraceStreams {
 
         override fun write(b: Int) {
             safe { original.write(b) }
-            feed(b.toChar())
+            feed(b.toChar().toString())
         }
 
         override fun write(b: ByteArray, off: Int, len: Int) {
