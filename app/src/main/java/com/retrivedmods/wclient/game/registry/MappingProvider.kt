@@ -30,7 +30,19 @@ abstract class MappingProvider<T>(val context: Context) {
         }
 
         val selectedVersion = available.max()
-        Log.i("MappingProvider", "Selected mapping version $selectedVersion for protocol $protocolVersion")
+        if (selectedVersion.toInt() != protocolVersion) {
+            // Runtime ids are only stable within a protocol, and this dataset stops at 1.21.80, so on a
+            // modern server every block/item name below is resolved against an out-of-date table. Modules
+            // that match on names (aura block checks, auto-eat item lookup) silently get wrong answers
+            // rather than an error, so say it once per provider.
+            Log.w(
+                "MappingProvider",
+                "No $assetPath mapping for protocol $protocolVersion; using $selectedVersion. " +
+                    "Block/item names may resolve wrong until a table for this protocol is added.",
+            )
+        } else {
+            Log.i("MappingProvider", "Selected mapping version $selectedVersion for protocol $protocolVersion")
+        }
         return readMapping(selectedVersion)
     }
 

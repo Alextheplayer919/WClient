@@ -173,6 +173,51 @@ Don't do "support 1.26.12". Do **"make version support cheap and the current ver
    (Java, "NetherNet MITM", but a single commit from 2026-01-08 — read it, don't build on it).
    Note the ecosystem gap: nothing in CloudburstMC (your Java dependency) has it yet.
 
+## What was actually done (2026-10-11)
+
+Protocol 944 + its base 924 are vendored in and registered. Numbers: **52** vendored `.java` files
+updated, **79** added, **6** files touched in `app/` + `relay/src`.
+
+* Source of truth: `CloudburstMC/Protocol@ccb85d2e` (2026-04-20, "Verify player info exists on full
+  auth") — deliberately the **last** upstream commit before v975 work started, so nothing from a
+  protocol this app cannot support leaked in.
+* The vendored tree is *not* a clean snapshot of one upstream commit, so every file went through a
+  real 3-way merge (`git merge-file`, base `01a2b1be` → end `ccb85d2e`, local as ours): 38 files were
+  already at base state and fast-forwarded, 6 auto-merged, **9 conflicted** and were resolved as
+  "upstream's body + WClient's `private`→`public` field sweep re-applied by declaration text"
+  (StartGame 82 fields, InventoryTransaction 17, ServerboundDiagnostics 9, GraphicsParameterOverride 4,
+  UpdateClientInputLocks 2, UpdateSubChunkBlocks 5→2 where three fields no longer exist upstream).
+  Where local was simply *older* than base (`BedrockPacketType`, `BedrockPacketHandler`,
+  `GraphicsOverrideParameterType`) upstream's version was taken whole.
+* Two upstream changes were **not** applied, on purpose: the deletion of `data/BookEditType.java`
+  (still referenced by local-only code) and `EncryptionUtils.java` (its new full-auth claim check is
+  unrelated to version support and would change auth behaviour).
+* Your tree had pruned 4 classes that upstream code references (`packet/ClientboundDataStorePacket`,
+  `data/datastore/{DataStoreAction,DataStoreChange,DataStoreRemoval}`). Upstream's v898/v924 codecs
+  register those serializers, so a straight port left unresolved imports; the 4 files were restored.
+  Their `test/FlagSerializationTest.java` stays pruned.
+* Checked mechanically afterwards: 0 conflict markers, 1241 `.java` files scanned with **0 unresolved**
+  `org.cloudburstmc.protocol.*` imports (specific and wildcard), no enum constant present in HEAD
+  disappeared, and no member removed by the update is referenced from `app/` or `relay/src`
+  (`World.kt:143 chunkX` is the app's own `LevelChunkPacket`, not the vendored packet). `java.awt` and
+  slf4j look alarming on Android but are already used by 18 and 2 pre-existing files that build green,
+  so no build-file change was needed.
+* Latent bug fixed on the way: `CodecRegistry.getClosestCodec` used `findLast` on a **descending**
+  list, so any unregistered protocol (950, 975, 900) got the **291 / 1.2.0** codec. Now `firstOrNull`,
+  pinned by `relay/src/test/kotlin/com/retrivedmods/wrelay/codec/CodecRegistryTest.kt` — the first test
+  in this repo that Gradle actually runs. Failed codec loads are recorded in
+  `CodecRegistry.unregisteredProtocols` and printed to stderr instead of only `println`-ing.
+
+### Still missing — assets, not code
+
+* `relay/src/main/resources/nbt/block_palette.nbt` is still the 1.21.11x-era table. Joining a 944
+  server works; block packet correctness against a *modern* palette does not.
+* `assets/mcpedata/{blocks,items}/index.json` stop at protocol **800**. There is no 924 or 944 table,
+  so `MappingProvider` picks 800 and now says so with a `Log.w` instead of silently mis-resolving
+  block/item names (aura block checks, auto-eat lookup are the name-matching consumers).
+  Generate both from BDS `1.26.12.2` or `CloudburstMC/Data` — there is no ready-made per-protocol
+  dump for this range (bedrock-data and BlockTracker were both dead ends).
+
 ## Sources
 
 * minecraft.wiki: `Bedrock_Edition_26.12` (protocol 944, dates, BDS 1.26.12.2), `Bedrock_Edition_26.0`/`26.1`

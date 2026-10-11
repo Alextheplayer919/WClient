@@ -21,7 +21,17 @@ class AutoCodecPacketListener(
 
         private fun fetchCodecForProtocol(protocolVersion: Int): BedrockCodec {
             val codec = CodecRegistry.getClosestCodec(protocolVersion)
-            
+            if (codec.protocolVersion != protocolVersion) {
+                // A mismatch means the game is newer (or older) than anything registered here. Encoding a
+                // 26.x batch with a 1.21 codec does not fail cleanly, it drops or mis-frames packets, so say
+                // so at connect time rather than leaving it to the player to notice a blank world.
+                System.err.println(
+                    "No codec registered for protocol $protocolVersion - negotiating as " +
+                        "${codec.protocolVersion} (${codec.minecraftVersion}). If this is a version you mean " +
+                        "to support, add it to CodecRegistry and VersionDetector."
+                )
+            }
+
             val minecraftVersion = CodecRegistry.getMinecraftVersion(codec.protocolVersion)
             val supportedVersions = VersionDetector.getSupportedVersionsForProtocol(codec.protocolVersion)
             

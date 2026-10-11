@@ -8,6 +8,15 @@ object CodecRegistry {
     private val minecraftVersionMap = mutableMapOf<String, Int>()
     private val sortedProtocolVersions = mutableListOf<Int>()
 
+    /**
+     * Protocols whose codec class failed to load. Registration used to swallow this into a println, so a
+     * typo or a not-yet-vendored codec silently removed a version and every client on it fell through to
+     * [getClosestCodec] instead of failing loudly.
+     */
+    private val failedRegistrations = mutableListOf<Int>()
+    val unregisteredProtocols: List<Int>
+        get() = failedRegistrations.toList()
+
     init {
         registerAllCodecs()
     }
@@ -70,7 +79,10 @@ object CodecRegistry {
         registerCodec(859, "1.21.120", "org.cloudburstmc.protocol.bedrock.codec.v859.Bedrock_v859")
         registerCodec(860, "1.21.124", "org.cloudburstmc.protocol.bedrock.codec.v860.Bedrock_v860")
         registerCodec(898, "1.21.130", "org.cloudburstmc.protocol.bedrock.codec.v898.Bedrock_v898")
-
+        registerCodec(924, "1.26.0", "org.cloudburstmc.protocol.bedrock.codec.v924.Bedrock_v924")
+        // Bedrock 26.10-26.13 share protocol 944; upstream labels the codec with the release that
+        // introduced it, and the game still reports itself with the legacy "1." prefix (1.26.12.2).
+        registerCodec(944, "1.26.10", "org.cloudburstmc.protocol.bedrock.codec.v944.Bedrock_v944")
 
         sortedProtocolVersions.sortDescending()
     }
@@ -88,7 +100,8 @@ object CodecRegistry {
             
             println("Registered codec: $minecraftVersion (protocol $protocolVersion)")
         } catch (e: Exception) {
-            println("Failed to register codec $minecraftVersion: ${e.message}")
+            failedRegistrations.add(protocolVersion)
+            System.err.println("Failed to register codec $minecraftVersion (protocol $protocolVersion): ${e.message}")
         }
     }
 
@@ -102,7 +115,10 @@ object CodecRegistry {
             return exactMatch
         }
 
-        val closestVersion = sortedProtocolVersions.findLast { it <= protocolVersion }
+        // sortedProtocolVersions is descending, so the first entry <= the request is the newest one that
+        // can still speak to it. findLast here returned the OLDEST (291 / 1.2.0) for any unknown protocol,
+        // which is what a newer or preview client would silently get.
+        val closestVersion = sortedProtocolVersions.firstOrNull { it <= protocolVersion }
             ?: sortedProtocolVersions.last()
 
         return codecMap[closestVersion]!!
