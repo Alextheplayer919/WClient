@@ -3,6 +3,14 @@
 -keep class io.netty.** { *; }
 -keep class org.cloudburstmc.netty.** { *; }
 -keep class org.cloudburstmc.protocol.bedrock.codec.** { *; }
+
+# Preserve readable class names in release diagnostics without retaining all members or affecting APK size.
+-keepnames class org.cloudburstmc.protocol.**
+-keepnames class org.cloudburstmc.netty.trace.**
+-keepnames class com.retrivedmods.wrelay.**
+-keepnames class com.retrivedmods.wtrace.**
+-keepnames class com.retrivedmods.wclient.console.**
+
 -keep @io.netty.channel.ChannelHandler$Sharable class *
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;

@@ -256,7 +256,8 @@ object WTrace {
         sizeBytes: Int,
         detail: String? = null,
         chatty: Boolean = false,
-        level: WLevel = WLevel.DEBUG
+        level: WLevel = WLevel.DEBUG,
+        packetId: Int? = null
     ) {
         val key = "$direction|$name"
         stats.record(direction, name, sizeBytes)
@@ -273,7 +274,12 @@ object WTrace {
             synchronized(lock) { packetThrottle[key] = now }
         }
 
-        val suffix = if (sizeBytes >= 0) " (${sizeBytes}B)" else ""
+        val suffix = buildString {
+            packetId?.let { append(" id=").append(it) }
+            if (sizeBytes >= 0) {
+                append(" (${sizeBytes}B)")
+            }
+        }
         log(level, WKind.PACKET, direction, "$name$suffix", detail)
     }
 

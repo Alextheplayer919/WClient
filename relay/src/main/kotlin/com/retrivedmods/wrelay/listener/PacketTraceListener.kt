@@ -4,6 +4,7 @@ import com.retrivedmods.wtrace.WLevel
 import com.retrivedmods.wtrace.WPacketStats
 import com.retrivedmods.wtrace.WTrace
 import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper
+import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket
 import org.cloudburstmc.protocol.bedrock.packet.ChunkRadiusUpdatedPacket
 import org.cloudburstmc.protocol.bedrock.packet.ClientToServerHandshakePacket
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket
@@ -44,7 +45,8 @@ class PacketTraceListener : WRelayPacketListener {
             sizeBytes = size,
             detail = detailFor(packet, direction, size),
             chatty = isChatty(packet),
-            level = levelFor(packet)
+            level = levelFor(packet),
+            packetId = wrapper.packetId
         )
     }
 
@@ -53,12 +55,11 @@ class PacketTraceListener : WRelayPacketListener {
         return runCatching { buffer.readableBytes() - wrapper.headerLength }.getOrDefault(-1)
     }
 
-    private fun packetName(packet: Any): String {
-        if (packet is UnknownPacket) {
-            return "UnknownPacket(0x${Integer.toHexString(packet.packetId)})"
-        }
-        return packet.javaClass.simpleName
-    }
+    private fun packetName(packet: BedrockPacket): String =
+        runCatching { packet.packetType.name }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: packet.javaClass.simpleName
 
     private fun levelFor(packet: Any): WLevel = when (packet) {
         is DisconnectPacket, is TransferPacket -> WLevel.WARN

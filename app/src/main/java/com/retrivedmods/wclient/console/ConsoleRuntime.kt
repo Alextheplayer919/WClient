@@ -236,33 +236,51 @@ object ConsoleRuntime {
 
                     val lastToClient = WTrace.stats.lastToClientMs()
                     val lastToServer = WTrace.stats.lastToServerMs()
-                    val downAge = if (lastToClient > 0L) now - lastToClient else Long.MAX_VALUE
-                    val upAge = if (lastToServer > 0L) now - lastToServer else Long.MAX_VALUE
+                    val downAge = lastToClient.takeIf { it > 0L }?.let { now - it }
+                    val upAge = lastToServer.takeIf { it > 0L }?.let { now - it }
+                    val noPacketsSeenYet = downAge == null && upAge == null
 
                     when {
-                        // Nothing at all for a long time while a session exists.
-                        lastToClient == 0L && lastToServer == 0L && now - sessionSince > NO_TRAFFIC_ALERT_MS -> {
-                            if (!stallReported) {
+                        // Do not treat an unseen direction as an age of Long.MAX_VALUE. A brand-new
+                        // relay gets a full 20 seconds before we decide the game never reached it.
+                        noPacketsSeenYet -> {
+                            if (now - sessionSince >= NO_TRAFFIC_ALERT_MS && !stallReported) {
                                 stallReported = true
                                 WTrace.error(
                                     "watchdog",
                                     "relay has been running for ${(now - sessionSince) / 1000}s and not a single packet " +
-                                        "crossed it: the game never reached the relay. ${Services.linkSnapshot() ?: ""}"
+                                        "crossed it: the game client never reached it (wrong port, another app on 19132, " +
+                                        "or the game was not restarted after pressing Start). " +
+                                        (Services.linkSnapshot() ?: "")
                                 )
                             }
                         }
-                        downAge > STALL_AFTER_MS && upAge > STALL_AFTER_MS -> {
+                        downAge != null && upAge != null &&
+                            downAge > STALL_AFTER_MS && upAge > STALL_AFTER_MS -> {
                             if (!stallReported) {
                                 stallReported = true
                                 WTrace.error(
                                     "watchdog",
                                     "LINK STALLED: no packets in either direction for " +
-                                        "${downAge / 1000}s (up) / ${upAge / 1000}s (down). " +
+                                        "${upAge / 1000}s (client to server) / ${downAge / 1000}s (server to client). " +
                                         "${Services.linkSnapshot() ?: ""} ${upstreamPingText()}"
                                 )
                             }
                         }
-                        downAge > STALL_AFTER_MS -> {
+                        upAge != null && upAge > STALL_AFTER_MS &&
+                            (downAge == null || downAge > STALL_AFTER_MS) -> {
+                            if (!stallReported) {
+                                stallReported = true
+                                val downDescription = downAge?.let { "${it / 1000}s ago" } ?: "never"
+                                WTrace.error(
+                                    "watchdog",
+                                    "LINK STALLED: the game client last sent a packet ${upAge / 1000}s ago, " +
+                                        "but the server has sent nothing since $downDescription. " +
+                                        "${Services.linkSnapshot() ?: ""} ${upstreamPingText()}"
+                                )
+                            }
+                        }
+                        downAge != null && downAge > STALL_AFTER_MS && upAge != null -> {
                             if (!stallReported) {
                                 stallReported = true
                                 WTrace.error(

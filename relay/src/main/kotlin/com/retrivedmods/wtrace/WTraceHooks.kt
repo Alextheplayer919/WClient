@@ -20,6 +20,8 @@ object WTraceHooks {
         }
         installed = true
 
+        WTraceNetty.install()
+
         RakTrace.setSink { level, tag, message, detail ->
             WTrace.log(WLevel.fromOrdinal(level), WKind.NET, "raknet/$tag", message, detail)
         }

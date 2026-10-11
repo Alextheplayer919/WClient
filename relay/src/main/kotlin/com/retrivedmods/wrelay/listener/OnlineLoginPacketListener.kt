@@ -39,6 +39,15 @@ class OnlineLoginPacketListener(
     private var skinData: JSONObject? = null
 
     override fun beforeClientBound(packet: BedrockPacket): Boolean {
+        if (packet is ClientToServerHandshakePacket && wRelaySession.handshakeCompletedWithServer) {
+            WTrace.warn(
+                "login",
+                "swallowed the game client's ClientToServerHandshake: the relay already completed the handshake " +
+                    "with the server, a second one would be a protocol violation"
+            )
+            return true
+        }
+
         if (packet is LoginPacket) {
             println("Processing login packet")
             val startedAt = System.currentTimeMillis()
@@ -70,6 +79,7 @@ class OnlineLoginPacketListener(
     @OptIn(ExperimentalEncodingApi::class)
     override fun beforeServerBound(packet: BedrockPacket): Boolean {
         if (packet is NetworkSettingsPacket) {
+            wRelaySession.retryUpstreamContextHandoffAfterNetworkSettings()
             val threshold = packet.compressionThreshold
             if (threshold > 0) {
                 wRelaySession.client!!.setCompression(packet.compressionAlgorithm)
@@ -140,9 +150,9 @@ class OnlineLoginPacketListener(
                 
                 wRelaySession.client!!.enableEncryption(key)
                 println("Encryption enabled successfully")
-                WTrace.info("login", "derived the AES key from ServerToClientHandshake; ClientToServerHandshake sent")
-
+                wRelaySession.handshakeCompletedWithServer = true
                 wRelaySession.serverBoundImmediately(ClientToServerHandshakePacket())
+                WTrace.info("login", "derived the AES key from ServerToClientHandshake; relay ClientToServerHandshake sent")
             } catch (e: Exception) {
                 println("Handshake failed: ${e.message}")
                 e.printStackTrace()

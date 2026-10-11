@@ -13,10 +13,13 @@ import io.netty.channel.ChannelFuture
 import io.netty.channel.nio.NioEventLoopGroup
 import io.netty.channel.socket.nio.NioDatagramChannel
 import kotlinx.coroutines.*
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory
+import org.cloudburstmc.netty.channel.raknet.RakConstants
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption
 import org.cloudburstmc.protocol.bedrock.BedrockPeer
 import org.cloudburstmc.protocol.bedrock.PacketDirection
@@ -39,12 +42,15 @@ class ConnectionManager(
         private const val MAX_CONNECTIONS_PER_WINDOW = 3
 
         /**
+         * MTU successfully negotiated with each upstream endpoint. Keep it across relay sessions so a
+         * subsequent join can start with a size already known to pass the network path.
+         */
+        private val learnedMtu = ConcurrentHashMap<String, Int>()
+
+        /**
          * How often the RakNet offline handshake re-sends Request1/Request2 while completing the
-         * connection. RakNet's own default is 1000ms; halving it doubles the number of attempts that
-         * fit inside [EnhancedServerConfig.connectionTimeout] and — because the MTU probe size steps
-         * down every 4 attempts (1400 -> 1200 -> 576) — reaches the smaller probe sizes twice as fast.
-         * That matters on mobile paths where large, fragmented UDP datagrams get dropped, which shows
-         * up as "the first join times out but a second attempt works".
+         * connection. RakNet's own default is 1000ms; the shorter interval plus the two-attempt MTU
+         * ladder gets a mobile path to smaller probes quickly when large UDP datagrams are dropped.
          */
         private const val HANDSHAKE_RETRY_MS = 500
     }
@@ -210,10 +216,23 @@ class ConnectionManager(
 
         val sessionTimeout =
             if (clientConfig.useRealisticTiming) ClientIdentification.getRealisticSessionTimeout() else config.sessionTimeout
+        val hostKey = mtuKey(remoteAddress)
+        val rememberedMtu = learnedMtu[hostKey]?.takeIf { it in RakConstants.MINIMUM_MTU_SIZE..RakConstants.MAXIMUM_MTU_SIZE }
+        val initialMtu = rememberedMtu ?: RakConstants.MAXIMUM_MTU_SIZE
+        val mtuSizes = mtuProbeLadder(rememberedMtu)
+
+        if (rememberedMtu != null) {
+            WTrace.info(
+                "connect",
+                "starting the next connect to ${remoteAddress.hostName}:${remoteAddress.port} at remembered MTU " +
+                    "${rememberedMtu}B (probe ladder ${mtuSizes.joinToString(" -> ")})"
+            )
+        }
 
         println(
             "RakNet connect options: protocol=${clientConfig.protocolVersion} guid=${clientConfig.guid} " +
-                "mtu=1400 connectTimeout=${config.connectionTimeout}ms sessionTimeout=${sessionTimeout}ms " +
+                "mtu=${initialMtu} probeLadder=${mtuSizes.joinToString(" -> ")} " +
+                "connectTimeout=${config.connectionTimeout}ms sessionTimeout=${sessionTimeout}ms " +
                 "handshakeRetry=${HANDSHAKE_RETRY_MS}ms compatibilityMode=${clientConfig.compatibilityMode}"
         )
 
@@ -231,7 +250,8 @@ class ConnectionManager(
             .option(RakChannelOption.RAK_SESSION_TIMEOUT, sessionTimeout)
             .option(RakChannelOption.RAK_COMPATIBILITY_MODE, clientConfig.compatibilityMode)
             .option(RakChannelOption.RAK_UNCONNECTED_MAGIC, clientConfig.unconnectedMagic)
-            .option(RakChannelOption.RAK_MTU, 1400)
+            .option(RakChannelOption.RAK_MTU, initialMtu)
+            .option(RakChannelOption.RAK_MTU_SIZES, mtuSizes)
             .option(RakChannelOption.RAK_TIME_BETWEEN_SEND_CONNECTION_ATTEMPTS_MS, HANDSHAKE_RETRY_MS)
             .handler(object : BedrockChannelInitializer<WRelaySession.ClientSession>() {
                 
@@ -275,7 +295,21 @@ class ConnectionManager(
 
         connectFuture.addListener { future ->
             timeoutJob.cancel()
-            if (!future.isSuccess && !continuation.isCompleted) {
+            if (future.isSuccess) {
+                // The connect future completes after RakNet's offline + online handshake, before a
+                // Bedrock packet is needed to create the ClientSession. Learn the negotiated MTU here.
+                val negotiatedMtu = runCatching {
+                    connectFuture.channel().config().getOption(RakChannelOption.RAK_MTU)
+                }.getOrNull()
+                if (negotiatedMtu != null && negotiatedMtu in RakConstants.MINIMUM_MTU_SIZE..RakConstants.MAXIMUM_MTU_SIZE) {
+                    learnedMtu[hostKey] = negotiatedMtu
+                    WTrace.info(
+                        "connect",
+                        "handshake completed at ${negotiatedMtu}B for ${remoteAddress.hostName}:${remoteAddress.port}; " +
+                            "remembered for the next connect"
+                    )
+                }
+            } else if (!continuation.isCompleted) {
                 val cause = future.cause()
                 WTrace.error(
                     "connect",
@@ -291,6 +325,25 @@ class ConnectionManager(
             timeoutJob.cancel()
             connectFuture.cancel(true)
         }
+    }
+
+    private fun mtuKey(address: WAddress): String =
+        "${address.hostName.trim().lowercase(Locale.ROOT)}:${address.port}"
+
+    /**
+     * Put the last successful MTU first, then try smaller sizes before increasing the probe again.
+     * This preserves RakNet's normal descending ladder for a fresh host while letting a known-good
+     * MTU skip the expensive probes that were already dropped on this route.
+     */
+    private fun mtuProbeLadder(preferredMtu: Int?): Array<Int> {
+        val defaults = RakConstants.MTU_SIZES.toList()
+        if (preferredMtu == null) {
+            return defaults.toTypedArray()
+        }
+
+        val smaller = defaults.filter { it < preferredMtu }.sortedDescending()
+        val larger = defaults.filter { it > preferredMtu }.sorted()
+        return (listOf(preferredMtu) + smaller + larger).distinct().toTypedArray()
     }
 
     /**
