@@ -45,8 +45,29 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      # The test tasks are listed alongside the APK build so CI actually runs the relay/Network unit
+      # tests - nothing ran them before, including the split-packet and codec-registry regressions.
+      # tee keeps the log for the annotation step below; pipefail so a compiler failure still fails the step.
       - name: Build debug APK (signed, installable)
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleDebug :relay:test :relay:Network:transport-raknet:test \
+            --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+
+      # The raw job log is served from a blob store that is not always reachable from tooling, and a wall
+      # of javac output buries the mistake. Mirror the first errors into check annotations, which the PR
+      # UI and `gh api /check-runs/{id}/annotations` both surface.
+      - name: Report first build errors
+        if: failure()
+        run: |
+          if [ -f /tmp/build.log ]; then
+            grep -nE "(^| )(error:|e: file:|FAILED|What went wrong)" /tmp/build.log |
+              head -40 |
+              while IFS= read -r line; do
+                msg="${line#*:}"
+                printf '::error::%s\n' "${msg//%/%25}"
+              done
+          fi
 
       - name: Build release APK (minified)
         id: release

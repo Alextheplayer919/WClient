@@ -33,3 +33,10 @@ dependencies {
     testImplementation(libs.testng)
     testImplementation(libs.junit.jupiter)
 }
+
+// The tests under src/test are JUnit 5 (org.junit.jupiter.api). Without this the default JUnit4/TestNG
+// runner discovers nothing and the task still reports success, which is how the split-packet
+// regressions stayed invisible: :relay:Network:transport-raknet:test was a no-op.
+tasks.test {
+    useJUnitPlatform()
+}
