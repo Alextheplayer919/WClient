@@ -8,9 +8,15 @@ boot console, and everything after that point is recorded.
 
 | Surface | When |
 |---|---|
-| **Boot console** | Automatically on app launch (before the loading screen). Continue manually or let the countdown finish. Can be turned off in the console's settings panel or the Settings page. |
-| **Console page** | Sidebar → terminal icon. Live while the relay runs, with filters, search, packet table and report export. |
+| **Home page panel** | Always, next to the Minecraft version and server host/port card. Shows `waiting for the relay` / `RECORDING`, the live packet counters, the last lines, `save report` and the float button. |
+| **Game settings / Relay Connected dialogs** | The same panel inside the version/host/port dialog and under the join IP/port, so the log is one tap away at the moment of joining. |
+| **Console page** | Sidebar → terminal icon. Live while the relay runs, with filters, search, packet table, trace settings and report export. |
 | **Floating console** | The terminal button on the overlay (drawn over the game) or the picture-in-picture action on the Console page. Last 40 lines plus the packet counters, so a freeze can be watched while it happens. |
+| **Boot console** | Optional (off by default): a full-screen console on launch before the loading screen, for the case the app does not start at all. |
+
+`=== relay START: host:port (mode=…, account=…) ===` is written the moment the Start button is pressed,
+so a report can be read from that line: everything above it is the boot state, everything below belongs
+to that capture.
 
 Reports are written to `WClient/console/` on shared storage (falling back to the app-specific folder
 when that is not writable) as `wclient-console_<date>_<time>.txt`.

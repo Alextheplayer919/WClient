@@ -59,14 +59,17 @@ Example:
 
 ## Console
 
-WClient opens on a built-in console before the relay can be started, so a join can be recorded from
-the very first line:
+WClient records everything from the moment the relay is switched on, in a console that lives right
+where you pick the Minecraft version and the server address:
 
-* **Boot console** - shown on launch, before the loading screen, with a countdown you can cancel.
-* **Console page** - the terminal icon in the sidebar: live log, filters, search, packet table and
-  report export while the relay runs.
-* **Floating console** - the terminal button on the overlay, over the game, for watching a freeze
-  while it happens.
+* **Home page panel** - next to the version/server card: `RECORDING` state, live packet counters and
+  the last lines, with `save report` and a button to float it over the game.
+* **Game settings & Relay Connected dialogs** - the same panel under the version/host/port fields and
+  under the join IP/port.
+* **Console page** - the terminal icon in the sidebar: full log, filters, search, per-packet-type
+  table, trace depth settings and report export while the relay runs.
+* **Floating console** - over the game (overlay button or PiP action), for watching a freeze while it
+  happens; the **boot console** is an optional extra for when the app does not even start.
 
 It captures app code logs, the relay's RakNet and Bedrock layers (handshake and MTU, splits and
 reassembly, acks/nacks/resends, compression and encryption switches, timeouts and disconnect
