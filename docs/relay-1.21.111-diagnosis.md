@@ -159,8 +159,15 @@ Second pass (this PR):
 
 ## How to verify
 
+0. **Compile status: green.** `:app:assembleDebug` on PR #14 built with these changes
+   (run 38123555712), which is the only automated check this area gets — no JDK or Maven
+   access in the agent sandbox, so nothing was compiled or exercised locally before that, and
+   no device log has been read yet. Behaviour on 1.21.111 is still unconfirmed until someone
+   installs the APK.
+
 1. Install the CI build of this branch (`Actions → Android Build → artifact
-   `WClient-APK-<sha>.apk`) or build `:app:assembleDebug` locally.
+   `WClient-APK-<sha>.apk`, containing `WClient-debug-<sha>.apk`) or build
+   `:app:assembleDebug` locally.
 2. Join a 1.21.111 server and watch logcat. New lines from this pass:
    - `Upstream link: mtu=… maxMessageBytes=…` and `Client link: mtu=… maxMessageBytes=…` at session
      creation — if either MTU is not 1400, that link's per-message budget has shrunk with it.
