@@ -85,7 +85,10 @@ jobs:
               text = open(x, errors='replace').read()
               module = x.split('/build/')[0] or 'root'
               for m in re.finditer(r'<testcase name="([^"]*)"[^>]*>\s*<(failure|error)[^>]*message="([^"]*)"', text):
-                  keep.append(f"{module}: test {m.group(1)} -> {html.unescape(m.group(3))[:400]}")
+                  keep.append(f"{module}: test {m.group(1)} -> {html.unescape(m.group(3))[:200]}")
+              for m in re.finditer(r'<(failure|error)[^>]*>(.*?)</\1>', text, re.S):
+                  body = html.unescape(m.group(2))
+                  keep.extend(l.strip() for l in body.splitlines() if 'Caused by' in l or 'NoClassDefFound' in l)
           seen, out = set(), []
           for l in keep:
               if l and l not in seen:

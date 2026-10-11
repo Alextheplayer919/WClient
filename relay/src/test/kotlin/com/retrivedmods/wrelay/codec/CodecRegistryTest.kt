@@ -16,7 +16,7 @@ class CodecRegistryTest {
     fun `every registered codec actually loaded`() {
         assertTrue(
             CodecRegistry.unregisteredProtocols.isEmpty(),
-            "codec classes missing from the vendored Protocol tree: ${CodecRegistry.unregisteredProtocols}"
+            "codecs failed to load: ${CodecRegistry.unregisteredReasons}"
         )
     }
 

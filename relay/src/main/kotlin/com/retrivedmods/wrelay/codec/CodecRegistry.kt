@@ -13,9 +13,12 @@ object CodecRegistry {
      * typo or a not-yet-vendored codec silently removed a version and every client on it fell through to
      * [getClosestCodec] instead of failing loudly.
      */
-    private val failedRegistrations = mutableListOf<Int>()
+    private val failedRegistrations = mutableMapOf<Int, String>()
     val unregisteredProtocols: List<Int>
-        get() = failedRegistrations.toList()
+        get() = failedRegistrations.keys.sorted()
+    /** Protocol -> why its codec class could not be loaded, e.g. a missing optional dependency. */
+    val unregisteredReasons: Map<Int, String>
+        get() = failedRegistrations.toMap()
 
     init {
         registerAllCodecs()
@@ -99,9 +102,11 @@ object CodecRegistry {
             sortedProtocolVersions.add(protocolVersion)
             
             println("Registered codec: $minecraftVersion (protocol $protocolVersion)")
-        } catch (e: Exception) {
-            failedRegistrations.add(protocolVersion)
-            System.err.println("Failed to register codec $minecraftVersion (protocol $protocolVersion): ${e.message}")
+        } catch (e: Throwable) {
+            // LinkageError included: without it, one codec whose dependency is absent throws out of the
+            // object's initializer and every version the relay can speak disappears with it.
+            failedRegistrations[protocolVersion] = e.toString()
+            System.err.println("Failed to register codec $minecraftVersion (protocol $protocolVersion): $e")
         }
     }
 
