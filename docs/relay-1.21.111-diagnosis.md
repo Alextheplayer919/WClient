@@ -71,14 +71,23 @@ RakNet throws `ConnectTimeoutException` with no message, so every failed attempt
 each attempt and renders exception cause chains (`describe()`), which is what a device log
 needs to tell a handshake timeout from a refused/dropped connection.
 
-## Why the freeze is likely the same stall
+## The freeze: two candidate mechanisms
 
-While the upstream connection is still being established (or retried), the game is already
-waiting for the server's login sequence. The relay's retry loop for a normal server is
-`FAST`: 3 attempts, 15 s RakNet timeout each, 1 s / 1.5 s backoff — i.e. the relay can still be
-retrying tens of seconds after the game started its login. If the game's login window expires
-mid-retry the client stays on the loading screen and eventually reports a timeout again, which
-matches "joins, then freezes and times out".
+**(a) The join window is exceeded while the relay is still connecting.** The game is already
+waiting for the server's login sequence while the relay is still establishing (or retrying) the
+upstream link — for a normal server the retry loop is `FAST`: 3 attempts, 15 s RakNet timeout
+each, 1 s / 1.5 s backoff. If the game's login window expires mid-retry the client sits on the
+loading screen and reports a timeout again. The new `Connection attempt …/…` /
+`connected to …` log lines tell this story directly.
+
+**(b) Large-payload handling in the vendored RakNet.** Once the join gets in, StartGame (block
+palette + item registry) and chunk data start flowing, and those are the packets that get
+RakNet-split. The vendored `SplitPacketHelper` is keyed by `partId & 255` with no owner/part-id
+check (and `RakUnhandledMessagesQueue` is unbounded); upstream CloudburstMC/Network fixed this
+area after the vendored snapshot. A mis-assembled split packet shows up exactly as "joined,
+then nothing loads, then timeout", and protocol 844's larger palettes make the payloads bigger
+than on older versions. This is the leading explanation for *the second join freezing*, and it
+is not fixed in this PR.
 
 Files changed:
 
