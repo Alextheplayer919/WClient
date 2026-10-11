@@ -195,6 +195,21 @@ public class RakChannelOption<T> extends ChannelOption<T> {
     public static final ChannelOption<Integer> RAK_MAX_QUEUED_BYTES =
             valueOf(RakChannelOption.class, "RAK_MAX_QUEUED_BYTES");
 
+    /**
+     * Maximum amount of payload bytes that may be retained across in-progress split packet reassemblies
+     * in a single RakNet session. The session is closed if this is exceeded. A value of 0 disables the limit.
+     */
+    public static final ChannelOption<Integer> RAK_MAX_SPLIT_QUEUED_BYTES =
+            valueOf(RakChannelOption.class, "RAK_MAX_SPLIT_QUEUED_BYTES");
+
+    /**
+     * Maximum amount of payload bytes that may be buffered across all ordering channels while waiting for a
+     * missing ordered packet in a single RakNet session. The session is closed if this is exceeded.
+     * A value of 0 disables the limit.
+     */
+    public static final ChannelOption<Integer> RAK_MAX_ORDERING_QUEUED_BYTES =
+            valueOf(RakChannelOption.class, "RAK_MAX_ORDERING_QUEUED_BYTES");
+
     @SuppressWarnings("deprecation")
     protected RakChannelOption() {
         super(null);

@@ -22,6 +22,7 @@ import static org.cloudburstmc.netty.channel.raknet.RakConstants.FLAG_VALID;
 import static org.cloudburstmc.netty.channel.raknet.RakConstants.ID_CONNECTED_PING;
 import static org.cloudburstmc.netty.channel.raknet.RakConstants.ID_DISCONNECTION_NOTIFICATION;
 import static org.cloudburstmc.netty.channel.raknet.RakConstants.MAXIMUM_ENCAPSULATED_HEADER_SIZE;
+import static org.cloudburstmc.netty.channel.raknet.RakConstants.MAXIMUM_SPLIT_COUNT;
 import static org.cloudburstmc.netty.channel.raknet.RakConstants.RAKNET_DATAGRAM_HEADER_SIZE;
 import static org.cloudburstmc.netty.channel.raknet.RakConstants.SESSION_STALE_MS;
 import static org.cloudburstmc.netty.channel.raknet.RakConstants.UDP_HEADER_SIZE;
@@ -47,6 +48,7 @@ import org.cloudburstmc.netty.util.SplitPacketHelper;
 import java.net.Inet6Address;
 import java.net.InetSocketAddress;
 import java.util.ArrayDeque;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -67,6 +69,10 @@ import io.netty.util.internal.logging.InternalLoggerFactory;
 public class RakSessionCodec extends ChannelDuplexHandler {
     private static final InternalLogger log = InternalLoggerFactory.getInstance(RakSessionCodec.class);
     public static final String NAME = "rak-session-codec";
+    // How far reliable and ordering indices may run ahead of the read index: the Bedrock client's reliable limit.
+    private static final int MAX_RECEIVE_GAP = 32768;
+    // Charged per queued ordered message on top of its payload.
+    private static final int ORDERING_ENTRY_OVERHEAD = 2048;
 
     private final RakChannel channel;
     private ScheduledFuture<?> tickFuture;
@@ -101,6 +107,10 @@ public class RakSessionCodec extends ChannelDuplexHandler {
     private Queue<IntRange> outgoingAcks;
     private Queue<IntRange> outgoingNaks;
     private long lastMinWeight;
+
+    // Payload bytes retained by inbound split reassembly and ordered-reorder buffering respectively.
+    private long splitQueuedBytes = 0;
+    private long orderingQueuedBytes = 0;
 
     public RakSessionCodec(RakChannel channel) {
         this.channel = channel;
@@ -192,6 +202,9 @@ public class RakSessionCodec extends ChannelDuplexHandler {
             }
             outgoingPackets.release();
         }
+
+        this.splitQueuedBytes = 0;
+        this.orderingQueuedBytes = 0;
 
         if (log.isTraceEnabled()) {
             log.trace("RakNet Session ({} => {}) closed!", this.channel.localAddress(), this.getRemoteAddress());
@@ -307,7 +320,12 @@ public class RakSessionCodec extends ChannelDuplexHandler {
         for (final EncapsulatedPacket encapsulated : packet.getPackets()) {
             if (encapsulated.getReliability().isReliable()) {
                 int missed = encapsulated.getReliabilityIndex() - this.reliabilityReadIndex;
-                if (missed > 0) {
+                if (missed >= MAX_RECEIVE_GAP) {
+                    // A gap this large is either a hostile peer or a lost-and-never-resent index; both would grow
+                    // reliableDatagramQueue forever while every ordered channel behind it waits.
+                    this.disconnect(RakDisconnectReason.BAD_PACKET);
+                    return;
+                } else if (missed > 0) {
                     if (missed < this.reliableDatagramQueue.size()) {
                         if (this.reliableDatagramQueue.get(missed)) {
                             this.reliableDatagramQueue.set(missed, false);
@@ -372,11 +390,17 @@ public class RakSessionCodec extends ChannelDuplexHandler {
 
     private void onOrderedReceived(ChannelHandlerContext ctx, EncapsulatedPacket packet) {
         FastBinaryMinHeap<EncapsulatedPacket> binaryHeap = this.orderingHeaps[packet.getOrderingChannel()];
-        if (this.orderReadIndex[packet.getOrderingChannel()] < packet.getOrderingIndex()) {
+        int distance = packet.getOrderingIndex() - this.orderReadIndex[packet.getOrderingChannel()];
+        if (distance >= MAX_RECEIVE_GAP) {
+            // Same as the reliable gap above: an ordering channel may not be made to buffer indefinitely.
+            this.disconnect(RakDisconnectReason.BAD_PACKET);
+            return;
+        } else if (distance > 0) {
             // Not next in line so add to queue.
             binaryHeap.insert(packet.getOrderingIndex(), packet.retain());
+            this.orderingQueuedBytes += packet.getBuffer().readableBytes() + ORDERING_ENTRY_OVERHEAD;
             return;
-        } else if (this.orderReadIndex[packet.getOrderingChannel()] > packet.getOrderingIndex()) {
+        } else if (distance < 0) {
             // We already have this
             return;
         }
@@ -391,6 +415,7 @@ public class RakSessionCodec extends ChannelDuplexHandler {
                 try {
                     // We got the expected packet
                     binaryHeap.remove();
+                    this.orderingQueuedBytes -= queuedPacket.getBuffer().readableBytes() + ORDERING_ENTRY_OVERHEAD;
                     this.orderReadIndex[packet.getOrderingChannel()]++;
                     ctx.fireChannelRead(queuedPacket.retain());
                 } finally {
@@ -406,19 +431,47 @@ public class RakSessionCodec extends ChannelDuplexHandler {
     private EncapsulatedPacket getReassembledPacket(EncapsulatedPacket splitPacket, ByteBufAllocator alloc) {
         this.checkForClosed();
 
-        SplitPacketHelper helper = this.splitPackets.get(splitPacket.getPartId());
-        if (helper == null) {
-            this.splitPackets.set(splitPacket.getPartId(), helper = new SplitPacketHelper(splitPacket.getPartCount()));
+        int partId = splitPacket.getPartId();
+        SplitPacketHelper helper = this.splitPackets.get(partId);
+        if (helper != null && !helper.matches(splitPacket)) {
+            // Part IDs are only unique modulo the size of this array, so an unrelated split packet may
+            // hold the slot. Drop the part rather than corrupt a reassembly that is still in progress.
+            if (!helper.expired()) {
+                return null;
+            }
+            helper = null; // Released below when set() overwrites it.
         }
 
-        // Try reassembling the packet.
+        if (helper == null) {
+            this.splitPackets.set(partId, helper = new SplitPacketHelper(partId, splitPacket.getPartCount()));
+        }
+
+        // Try reassembling the packet, tracking how many bytes this session now retains for split reassembly.
+        int sizeBefore = helper.getReassembledSize();
         EncapsulatedPacket result = helper.add(splitPacket, alloc);
+        this.splitQueuedBytes += helper.getReassembledSize() - sizeBefore;
         if (result != null) {
-            // Packet reassembled. Remove the helper
-            this.splitPackets.remove(splitPacket.getPartId(), helper);
+            // Packet reassembled. Remove the helper and reclaim the bytes it held.
+            this.splitQueuedBytes -= helper.getReassembledSize();
+            this.splitPackets.remove(partId, helper);
         }
 
         return result;
+    }
+
+    /**
+     * Drops split reassemblies that have been waiting too long for their remaining parts. Without this a peer can
+     * hold parts in reassembly indefinitely: {@link SplitPacketHelper#expired()} has otherwise never been called.
+     */
+    private void evictExpiredSplitPackets() {
+        Iterator<SplitPacketHelper> iterator = this.splitPackets.iterator();
+        while (iterator.hasNext()) {
+            SplitPacketHelper helper = iterator.next();
+            if (helper != null && helper.expired()) {
+                this.splitQueuedBytes -= helper.getReassembledSize();
+                iterator.remove();
+            }
+        }
     }
 
     private void tryTick() {
@@ -451,6 +504,26 @@ public class RakSessionCodec extends ChannelDuplexHandler {
                     metrics.queuedPacketBytes(queuedBytes);
                 }
             }
+        }
+
+        // Drop stale incomplete reassemblies before enforcing the inbound split budget, so a peer that
+        // legitimately abandons a split packet does not count against a peer that is deliberately holding one.
+        this.evictExpiredSplitPackets();
+
+        int maxSplitQueuedBytes = this.channel.config().getOption(RakChannelOption.RAK_MAX_SPLIT_QUEUED_BYTES);
+        if (maxSplitQueuedBytes > 0 && this.splitQueuedBytes > maxSplitQueuedBytes) {
+            log.warn("[{}] Split reassembly holding {} bytes, over the {} byte limit; closing session",
+                    this.getRemoteAddress(), this.splitQueuedBytes, maxSplitQueuedBytes);
+            this.disconnect(RakDisconnectReason.SPLIT_QUEUE_TOO_LONG);
+            return;
+        }
+
+        int maxOrderingQueuedBytes = this.channel.config().getOption(RakChannelOption.RAK_MAX_ORDERING_QUEUED_BYTES);
+        if (maxOrderingQueuedBytes > 0 && this.orderingQueuedBytes > maxOrderingQueuedBytes) {
+            log.warn("[{}] Ordering buffers holding {} bytes, over the {} byte limit; closing session",
+                    this.getRemoteAddress(), this.orderingQueuedBytes, maxOrderingQueuedBytes);
+            this.disconnect(RakDisconnectReason.ORDERING_QUEUE_TOO_LONG);
+            return;
         }
 
         if (this.state == RakState.UNCONNECTED) {
@@ -716,6 +789,17 @@ public class RakSessionCodec extends ChannelDuplexHandler {
             }
 
             int split = ((buffer.readableBytes() - 1) / maxLength) + 1;
+            if (split > MAXIMUM_SPLIT_COUNT) {
+                // Refused before taking a split ID or ordering index, so the session carries on. Sending it anyway
+                // would be worse: the Bedrock client acknowledges every part and then drops the message, which
+                // stalls this ordering channel for good and looks like a freeze to the player.
+                log.warn("[{}] Refusing to send a {} byte message: it needs {} parts, more than the {} this peer " +
+                                "can take at MTU {} ({} bytes per part). Dropping it keeps the ordering channel alive.",
+                        this.getRemoteAddress(), buffer.readableBytes(), split, MAXIMUM_SPLIT_COUNT, this.getMtu(),
+                        this.getMtu() - MAXIMUM_ENCAPSULATED_HEADER_SIZE - RAKNET_DATAGRAM_HEADER_SIZE);
+                throw new IllegalArgumentException("Message of " + buffer.readableBytes() + " bytes needs " + split
+                        + " parts, more than the " + MAXIMUM_SPLIT_COUNT + " allowed");
+            }
             buffer.retain(split);
 
             buffers = new ByteBuf[split];
@@ -890,6 +974,26 @@ public class RakSessionCodec extends ChannelDuplexHandler {
 
     public int getMtu() {
         return this.channel.config().getMtu() - UDP_HEADER_SIZE - (this.getRemoteAddress().getAddress() instanceof Inet6Address ? 40 : 20);
+    }
+
+    // Message bytes one split part carries, at an MTU as getMtu reports it
+    private static int partSize(int mtu) {
+        return mtu - MAXIMUM_ENCAPSULATED_HEADER_SIZE - RAKNET_DATAGRAM_HEADER_SIZE;
+    }
+
+    /**
+     * Largest message the session can write, what {@link org.cloudburstmc.netty.channel.raknet.RakConstants#MAXIMUM_SPLIT_COUNT}
+     * parts carry at its MTU.
+     */
+    public int getMaxMessageSize() {
+        return maxMessageSize(this.getMtu());
+    }
+
+    /**
+     * Largest message a session can write at an MTU less the UDP and IP headers, as {@link #getMtu()} reports it.
+     */
+    public static int maxMessageSize(int mtu) {
+        return MAXIMUM_SPLIT_COUNT * partSize(mtu);
     }
 
     public RakChannelMetrics getMetrics() {

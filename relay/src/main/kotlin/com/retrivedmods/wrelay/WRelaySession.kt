@@ -76,6 +76,23 @@ class WRelaySession internal constructor(
         }.getOrNull()
 
     /**
+     * MTU and split budget of the RakNet link on [peer], for the log.
+     *
+     * Both links cap a single message at a fixed number of split parts, so how much payload a link can carry
+     * is a function of its negotiated MTU. A batch over that limit is dropped by the transport (never sent half
+     * way), because a Bedrock client acknowledges every part of an oversized message and then throws the message
+     * away, which stalls that ordering channel for good - the post-join freeze. Logging the real numbers turns
+     * "the world never loads" into "the link can only carry N bytes per message".
+     */
+    fun describeLink(name: String, peer: BedrockPeer?): String {
+        val codec = runCatching { peer?.channel?.pipeline()?.get(RakSessionCodec::class.java) }
+            .getOrNull() ?: return "$name: RakNet session not ready"
+        return runCatching {
+            "$name: mtu=${codec.mtu} maxMessageBytes=${codec.maxMessageSize}"
+        }.getOrElse { "$name: RakNet session not measurable (${it.javaClass.simpleName})" }
+    }
+
+    /**
      * True when the negotiated codec can encode [packet]. Pre-encoded [UnknownPacket]s are always
      * accepted. Packets missing from the codec (for example TickSync on protocol >= 685) would make
      * the Netty encoder throw, so callers should drop them instead of writing them.

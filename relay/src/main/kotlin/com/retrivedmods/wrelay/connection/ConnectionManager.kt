@@ -206,6 +206,9 @@ class ConnectionManager(
                 
                 override fun initSession(clientSession: WRelaySession.ClientSession) {
                     wRelaySession.client = clientSession
+                    // The size of a message the link can carry is what chunk data and StartGame are measured
+                    // against, so log the negotiated MTU rather than the 1400 requested above.
+                    println("Upstream ${wRelaySession.describeLink("link", clientSession.peer)}")
                     if (!continuation.isCompleted) {
                         continuation.resume(clientSession) {}
                     }

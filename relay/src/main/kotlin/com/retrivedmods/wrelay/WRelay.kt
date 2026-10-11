@@ -99,6 +99,9 @@ class WRelay(
                     return WRelaySession(peer, subClientId, this@WRelay)
                         .also {
                             wRelaySession = it
+                            // Same budget on the game-facing link: if the client probed a small MTU, the packets
+                            // this relay can forward shrink with it.
+                            println("Client ${it.describeLink("link", peer)}")
                             val config = if (remoteAddress != null && ServerCompatUtils.isProtectedServer(remoteAddress!!)) {
                                 ServerCompatUtils.getRecommendedConfig(remoteAddress!!)
                             } else {
