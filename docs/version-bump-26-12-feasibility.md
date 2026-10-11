@@ -202,6 +202,19 @@ updated, **79** added, **6** files touched in `app/` + `relay/src`.
   (`World.kt:143 chunkX` is the app's own `LevelChunkPacket`, not the vendored packet). `java.awt` and
   slf4j look alarming on Android but are already used by 18 and 2 pre-existing files that build green,
   so no build-file change was needed.
+* The vendored tree differs from upstream@`01a2b1be` in 278 files, and only **9** of those differ for a
+  reason other than the `private`→`public` field sweep. That short list is the real contract with
+  upstream, and each one was checked against the new codecs: `PlayerListPacket` + its `v800` serializer
+  (color is an `int`, not `java.awt.Color` - no 898/924/944 serializer touches it), `Bedrock_v860`
+  (`.raknetProtocolVersion(11)`, which END's `BedrockCodec.Builder` still offers), `Bedrock_v898` (the
+  `ClientboundDataStore` registration their prune removed), `MovementEffectType` (no `DOLPHIN_BOOST`),
+  and javadoc-only drift in `AnimatePacket`/`MobEffectPacket`/`EntityEventType`. The ninth,
+  `ServerboundDataStorePacket`, was the one genuine breakage: upstream moved its flat fields into
+  `DataStoreUpdate`, so both it and `ServerboundDataStoreSerializer_v898` were aligned to END (nothing
+  in `app/` or `relay/` referenced the flat API).
+  Anything that re-vendors this tree should diff the whole module against upstream, not just the commits
+  in the version window - the 898→944 window is what missed the DataStore refactor the first time.
+
 * Latent bug fixed on the way: `CodecRegistry.getClosestCodec` used `findLast` on a **descending**
   list, so any unregistered protocol (950, 975, 900) got the **291 / 1.2.0** codec. Now `firstOrNull`,
   pinned by `relay/src/test/kotlin/com/retrivedmods/wrelay/codec/CodecRegistryTest.kt` — the first test

@@ -55,19 +55,33 @@ jobs:
             --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
 
       # The raw job log is served from a blob store that is not always reachable from tooling, and a wall
-      # of javac output buries the mistake. Mirror the first errors into check annotations, which the PR
-      # UI and `gh api /check-runs/{id}/annotations` both surface.
-      - name: Report first build errors
+      # of javac output buries the mistake. Mirror the compiler errors (with their symbol/location lines)
+      # into one check annotation, which the PR UI and `gh api /check-runs/{id}/annotations` both surface.
+      - name: Report build errors
         if: failure()
         run: |
-          if [ -f /tmp/build.log ]; then
-            grep -nE "(^| )(error:|e: file:|FAILED|What went wrong)" /tmp/build.log |
-              head -40 |
-              while IFS= read -r line; do
-                msg="${line#*:}"
-                printf '::error::%s\n' "${msg//%/%25}"
-              done
-          fi
+          python3 - <<'PY'
+          import re, sys
+          try:
+              lines = open('/tmp/build.log', errors='replace').read().splitlines()
+          except OSError:
+              sys.exit(0)
+          keep = []
+          for i, l in enumerate(lines):
+              if re.search(r'error:\s|^e: |^> Task .*(FAILED|\bcompile\b)|What went wrong', l):
+                  keep.append(l.strip())
+                  for nxt in lines[i + 1:i + 4]:
+                      if re.match(r'\s*(symbol:|location:|required:|found:|reason:|where:)', nxt):
+                          keep.append(nxt.strip())
+          seen, out = set(), []
+          for l in keep:
+              if l not in seen:
+                  seen.add(l)
+                  out.append(l)
+          msg = "\n".join(out[:150])[:20000] or "build failed, no compiler error lines matched"
+          msg = msg.replace('%', '%25').replace('\n', '%0A')
+          print(f"::error title=Build errors ({len(out)} lines)::{msg}")
+          PY
 
       - name: Build release APK (minified)
         id: release
