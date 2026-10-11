@@ -35,6 +35,7 @@ import org.cloudburstmc.netty.channel.raknet.RakServerChannel;
 import org.cloudburstmc.netty.channel.raknet.config.RakServerChannelConfig;
 import org.cloudburstmc.netty.channel.raknet.config.RakServerMetrics;
 import org.cloudburstmc.netty.handler.codec.raknet.AdvancedChannelInboundHandler;
+import org.cloudburstmc.netty.trace.RakTrace;
 import org.cloudburstmc.netty.util.RakUtils;
 import org.cloudburstmc.netty.util.SecureAlgorithmProvider;
 
@@ -176,8 +177,18 @@ public class RakServerOfflineHandler extends AdvancedChannelInboundHandler<Datag
         int[] supportedProtocols = ((RakServerChannelConfig) ctx.channel().config()).getSupportedProtocols();
         if (supportedProtocols != null && Arrays.binarySearch(supportedProtocols, protocolVersion) < 0) {
             int latestVersion = supportedProtocols[supportedProtocols.length - 1];
+            if (RakTrace.enabled()) {
+                RakTrace.log(RakTrace.LEVEL_WARN, "handshake", "game client " + sender + " offered RakNet protocol "
+                        + protocolVersion + ", supported: " + Arrays.toString(supportedProtocols)
+                        + "; replying INCOMPATIBLE_PROTOCOL_VERSION");
+            }
             this.sendIncompatibleVersion(ctx, packet, latestVersion, magicBuf, guid);
             return;
+        }
+
+        if (RakTrace.enabled()) {
+            RakTrace.log(RakTrace.LEVEL_INFO, "handshake", "game client " + sender + " requested MTU " + mtu
+                    + "B (RakNet protocol " + protocolVersion + "; this is the game link's per-datagram budget)");
         }
 
         // TODO: banned address check?
@@ -260,6 +271,11 @@ public class RakServerOfflineHandler extends AdvancedChannelInboundHandler<Datag
             // The client should have already negotiated a valid MTU
             this.sendAlreadyConnected(ctx, packet, magicBuf, guid);
             return;
+        }
+
+        if (RakTrace.enabled()) {
+            RakTrace.log(RakTrace.LEVEL_INFO, "handshake", "game client " + sender + " confirmed MTU " + mtu
+                    + "B (guid=" + clientGuid + "); game link established");
         }
 
         RakServerChannel serverChannel = (RakServerChannel) ctx.channel();

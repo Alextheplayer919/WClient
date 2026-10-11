@@ -1,6 +1,6 @@
 package com.retrivedmods.wclient.game.inventory
 
-import android.util.Log
+import com.retrivedmods.wclient.util.WLog as Log
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerType
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.InventoryActionData

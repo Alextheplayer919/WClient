@@ -57,6 +57,27 @@ Example:
 }
 ```
 
+## Console
+
+WClient records everything from the moment the relay is switched on, in a console that lives right
+where you pick the Minecraft version and the server address:
+
+* **Home page panel** - next to the version/server card: `RECORDING` state, live packet counters and
+  the last lines, with `save report` and a button to float it over the game.
+* **Game settings & Relay Connected dialogs** - the same panel under the version/host/port fields and
+  under the join IP/port.
+* **Console page** - the terminal icon in the sidebar: full log, filters, search, per-packet-type
+  table, trace depth settings and report export while the relay runs.
+* **Floating console** - over the game (overlay button or PiP action), for watching a freeze while it
+  happens; the **boot console** is an optional extra for when the app does not even start.
+
+It captures app code logs, the relay's RakNet and Bedrock layers (handshake and MTU, splits and
+reassembly, acks/nacks/resends, compression and encryption switches, timeouts and disconnect
+reasons), and every forwarded packet with its direction, wire size and packet id. A watchdog reports
+stalls by shape: link dead, downstream starved (the "everyone froze" case) or the game never reached
+the relay. Reports are saved to `WClient/console/` and the whole picture is described in
+[docs/CONSOLE.md](docs/CONSOLE.md).
+
 ## License
 
 WClient is licensed under the **GNU General Public License v3.0 (GPLv3)**.

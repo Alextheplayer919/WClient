@@ -7,6 +7,7 @@ import com.retrivedmods.wrelay.codec.CodecRegistry
 import com.retrivedmods.wrelay.config.EnhancedServerConfig
 import com.retrivedmods.wrelay.connection.ConnectionManager
 import com.retrivedmods.wrelay.util.ServerCompatUtils
+import com.retrivedmods.wtrace.WTrace
 import io.netty.bootstrap.ServerBootstrap
 import io.netty.channel.Channel
 import io.netty.channel.ChannelFuture
@@ -72,6 +73,13 @@ class WRelay(
 
         this.remoteAddress = remoteAddress
 
+        WTrace.info(
+            "relay",
+            "starting relay: listening on ${localAddress.hostName}:${localAddress.port}, forwarding to " +
+                "${remoteAddress.hostName}:${remoteAddress.port}, advertised version " +
+                "${advertisement.version()} (protocol ${advertisement.protocolVersion()})"
+        )
+
         if (ServerCompatUtils.isProtectedServer(remoteAddress)) {
             println("Protected server detected: ${remoteAddress.hostName}")
             val tips = ServerCompatUtils.getConnectionTips(remoteAddress)
@@ -99,6 +107,10 @@ class WRelay(
                     return WRelaySession(peer, subClientId, this@WRelay)
                         .also {
                             wRelaySession = it
+                            WTrace.info(
+                                "relay",
+                                "game client opened a session (subClientId=$subClientId); waiting for its login"
+                            )
                             // Same budget on the game-facing link: if the client probed a small MTU, the packets
                             // this relay can forward shrink with it.
                             println("Client ${it.describeLink("link", peer)}")
@@ -127,6 +139,15 @@ class WRelay(
             .also {
                 it.channel().pipeline().remove(RakServerRateLimiter.NAME)
                 channelFuture = it
+                if (it.isSuccess) {
+                    WTrace.info("relay", "relay socket bound and listening (UDP ${localAddress.hostName}:${localAddress.port})")
+                } else {
+                    WTrace.error(
+                        "relay",
+                        "relay socket failed to bind ${localAddress.hostName}:${localAddress.port}: " +
+                            (it.cause()?.message ?: "unknown")
+                    )
+                }
             }
 
         return this

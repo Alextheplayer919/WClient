@@ -4,7 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.retrivedmods.wclient.util.WLog as Log
 import android.view.WindowManager
 import android.graphics.PixelFormat
 import android.widget.Toast
@@ -28,6 +28,7 @@ import com.retrivedmods.wrelay.listener.GamingPacketHandler
 import com.retrivedmods.wrelay.listener.OnlineLoginPacketListener
 import com.retrivedmods.wrelay.util.captureGamePacket
 import com.retrivedmods.wclient.util.ServerCompatUtils
+import com.retrivedmods.wtrace.WTrace
 import java.io.File
 import kotlin.concurrent.thread
 
@@ -102,6 +103,17 @@ object Services {
         File(context.cacheDir, "token_cache.json")
 
         isActive = true
+
+        // Session marker: everything after this line belongs to this capture, and this is the line the
+        // player can point at when they say "the freeze happened on this attempt".
+        WTrace.info(
+            "session",
+            "=== relay START: ${captureModeModel.serverHostName}:${captureModeModel.serverPort} " +
+                "(mode=${captureModeModel.serverConfigType}, optimize=${captureModeModel.enableServerOptimizations}, " +
+                "protected=${captureModeModel.isProtectedServer()}, " +
+                "account=${AccountManager.selectedAccount?.mcChain?.displayName ?: "none"}) ==="
+        )
+
         handler.post {
             OverlayManager.show(context)
         }
@@ -168,6 +180,7 @@ object Services {
     }
 
     private fun off() {
+        WTrace.info("session", "=== relay STOP requested (was forwarding until now) ===")
         thread(name = "WRelayThread") {
             ModuleManager.saveConfig()
 
@@ -213,14 +226,29 @@ object Services {
         }
     }
 
+    // ------------------------------------------------------------------ console
+
+    /** One-line state of both relay links, or null when no session exists yet. */
+    fun linkSnapshot(): String? = runCatching { wRelay?.wRelaySession?.linkSnapshot() }.getOrNull()
+
+    /** RakNet RTT (ms) of the relay to server link, or null before it was measured. */
+    fun upstreamPingMs(): Long? = runCatching { wRelay?.wRelaySession?.upstreamPingMs }.getOrNull()
+
+    /** True once the relay has a session object, even if the upstream link is still connecting. */
+    fun hasSession(): Boolean = runCatching { wRelay?.wRelaySession != null }.getOrDefault(false)
+
     private fun initModules(wRelaySession: WRelaySession) {
         val session = GameSession(wRelaySession)
         wRelaySession.listeners.add(session)
+
+        // Raw packet trace first, so a line is written even for packets a later listener swallows.
+        wRelaySession.listeners.add(com.retrivedmods.wrelay.listener.PacketTraceListener())
 
         wRelaySession.listeners.add(com.retrivedmods.wrelay.listener.VersionTrackingListener() { protocol, version ->
             detectedProtocolVersion = protocol
             detectedMinecraftVersion = version
             Log.i("Services", "Client version: Minecraft $version (Protocol $protocol)")
+            WTrace.info("version", "the game client identified itself as Minecraft $version (protocol $protocol)")
         })
 
         for (module in ModuleManager.modules) {

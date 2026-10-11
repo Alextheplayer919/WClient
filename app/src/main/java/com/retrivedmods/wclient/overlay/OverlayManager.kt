@@ -11,6 +11,7 @@ import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.retrivedmods.wclient.console.ConsoleRuntime
 import com.retrivedmods.wclient.game.ModuleManager
 import com.retrivedmods.wclient.ui.theme.WClientTheme
 import com.retrivedmods.wclient.overlay.gui.classic.OverlayButton
@@ -45,6 +46,9 @@ object OverlayManager {
         }
     }
 
+    /** Floating console button over the game, when the console's overlay switch is on. */
+    private var consoleOverlayButton: OverlayWindow? = null
+
     private fun initializeOverlays(context: Context) {
         val theme = getGUITheme(context)
 
@@ -53,6 +57,7 @@ object OverlayManager {
         currentOverlayButton = null
         currentClickGUI = null
         currentClickGUIOverlay = null
+        consoleOverlayButton = null
 
 
         when (theme) {
@@ -69,7 +74,33 @@ object OverlayManager {
 
 
         currentOverlayButton?.let { overlayWindows.add(it) }
+
+        // The console button rides along with the relay's overlay: it is how the user watches packets
+        // while the game is in the foreground, which is exactly when a freeze happens.
+        if (ConsoleRuntime.settings.overlayButton) {
+            val button = com.retrivedmods.wclient.overlay.console.ConsoleOverlayButton()
+            consoleOverlayButton = button
+            overlayWindows.add(button)
+        }
     }
+
+    /** Opens or closes the floating console window, e.g. from the console page. */
+    fun toggleConsoleOverlay() {
+        val context = currentContext ?: return
+        val open = consoleOverlayWindow
+        if (open != null) {
+            overlayWindows.remove(open)
+            dismissOverlayWindow(context, open)
+            consoleOverlayWindow = null
+            return
+        }
+        val window = com.retrivedmods.wclient.overlay.console.ConsoleOverlayWindow()
+        consoleOverlayWindow = window
+        overlayWindows.add(window)
+        showOverlayWindow(context, window)
+    }
+
+    private var consoleOverlayWindow: OverlayWindow? = null
 
     fun showOverlayWindow(overlayWindow: OverlayWindow) {
         overlayWindows.add(overlayWindow)

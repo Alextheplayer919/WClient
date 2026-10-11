@@ -1,6 +1,6 @@
 package com.retrivedmods.wclient.service
 
-import android.util.Log
+import com.retrivedmods.wclient.util.WLog as Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

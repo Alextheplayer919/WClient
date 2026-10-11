@@ -21,9 +21,11 @@ import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.retrivedmods.wclient.console.ConsoleRuntime
 import com.retrivedmods.wclient.game.ModuleManager
 import com.retrivedmods.wclient.navigation.Navigation
 import com.retrivedmods.wclient.ui.component.LoadingScreen
+import com.retrivedmods.wclient.ui.console.ConsoleScreen
 import com.retrivedmods.wclient.ui.theme.WClientTheme
 import com.retrivedmods.wclient.util.SoundUtil
 
@@ -63,19 +65,39 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             WClientTheme {
-                var showLoading by remember { mutableStateOf(true) }
+                // Boot order: console first (it captures everything from before the relay can be
+                // started), then the existing loading screen, then the app itself.
+                var stage by remember {
+                    mutableStateOf(if (ConsoleRuntime.settings.showOnBoot) BootStage.Console else BootStage.Loading)
+                }
 
-                if (showLoading) {
-                    LoadingScreen(
+                when (stage) {
+                    BootStage.Console -> ConsoleScreen(
+                        startup = true,
+                        autoContinueSeconds = if (ConsoleRuntime.settings.autoContinueOnBoot) {
+                            ConsoleRuntime.settings.bootHoldSeconds
+                        } else {
+                            0
+                        },
+                        onExit = { stage = BootStage.Loading }
+                    )
+
+                    BootStage.Loading -> LoadingScreen(
                         onDone = {
-                            showLoading = false
+                            stage = BootStage.Main
                         }
                     )
-                } else {
-                    Navigation()
+
+                    BootStage.Main -> Navigation()
                 }
             }
         }
+    }
+
+    private enum class BootStage {
+        Console,
+        Loading,
+        Main
     }
 
     private fun setupImmersiveMode() {

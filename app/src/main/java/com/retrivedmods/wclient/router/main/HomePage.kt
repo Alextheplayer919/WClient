@@ -107,6 +107,7 @@ import com.retrivedmods.wclient.ui.component.WButton
 import com.retrivedmods.wclient.ui.component.WFloatingActionButton
 import com.retrivedmods.wclient.ui.component.WGlassCard
 import com.retrivedmods.wclient.ui.component.authId
+import com.retrivedmods.wclient.ui.console.LiveConsolePanel
 import com.retrivedmods.wclient.ui.theme.WColors
 import com.retrivedmods.wclient.util.LocalSnackbarHostState
 import com.retrivedmods.wclient.util.MinecraftUtils
@@ -238,6 +239,9 @@ fun HomePageContent() {
                             GameCard()
                         }
                     }
+                    // The console sits right where the version and server are chosen: it starts
+                    // recording the moment the relay is turned on.
+                    LiveConsolePanel()
                     TexturePackCard()
                     HomeLinksRow()
                 }
@@ -386,6 +390,9 @@ fun HomePageContent() {
                                 }
                             }
                         }
+
+                        // Joining is the moment things go wrong: keep the live log one tap away.
+                        LiveConsolePanel(compact = true, lines = 4)
                     }
                 },
                 confirmButton = { TextButton(onClick = { showConnectionDialog = false }) { Text("OK") } }
@@ -624,6 +631,10 @@ private fun GameCard() {
                                     }
                                 }
                             }
+
+                            // Live console for this exact configuration: version + host + port, then
+                            // Start on the Home page. The panel keeps the whole attempt on the record.
+                            LiveConsolePanel(compact = true)
                         }
                     }
                 }

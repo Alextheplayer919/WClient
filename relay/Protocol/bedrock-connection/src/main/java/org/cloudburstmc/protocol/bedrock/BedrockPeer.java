@@ -29,6 +29,7 @@ import org.cloudburstmc.protocol.bedrock.netty.codec.encryption.BedrockEncryptio
 import org.cloudburstmc.protocol.bedrock.netty.codec.encryption.BedrockEncryptionEncoder;
 import org.cloudburstmc.protocol.bedrock.netty.codec.packet.BedrockPacketCodec;
 import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockChannelInitializer;
+import org.cloudburstmc.protocol.bedrock.netty.trace.BedrockTrace;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
 
@@ -97,6 +98,10 @@ public class BedrockPeer extends ChannelInboundHandlerAdapter {
 
     private void onRakNetDisconnect(ChannelHandlerContext ctx, RakDisconnectReason reason) {
         CharSequence disconnectReason = BedrockDisconnectReasons.getReason(reason);
+        if (BedrockTrace.enabled()) {
+            BedrockTrace.log(BedrockTrace.LEVEL_WARN, "session", "RakNet closed the link to "
+                    + this.getSocketAddress() + ": " + reason + " -> " + disconnectReason);
+        }
         for (BedrockSession session : this.sessions.values()) {
             session.disconnectReason = disconnectReason;
         }
@@ -143,10 +148,19 @@ public class BedrockPeer extends ChannelInboundHandlerAdapter {
                 new BedrockEncryptionDecoder(secretKey, EncryptionUtils.createCipher(useCtr, false, secretKey)));
 
         log.debug("Encryption enabled for {}", getSocketAddress());
+        if (BedrockTrace.enabled()) {
+            BedrockTrace.log(BedrockTrace.LEVEL_INFO, "encryption",
+                    "AES encryption enabled for " + this.getSocketAddress()
+                            + " (every later batch on this link is encrypted)");
+        }
     }
 
     public void setCompression(PacketCompressionAlgorithm algorithm) {
         Objects.requireNonNull(algorithm, "algorithm");
+        if (BedrockTrace.enabled()) {
+            BedrockTrace.log(BedrockTrace.LEVEL_INFO, "compression",
+                    "compression set to " + algorithm + " for " + this.getSocketAddress());
+        }
         this.setCompression(BedrockChannelInitializer.getCompression(algorithm, this.getRakVersion(), false));
     }
 
@@ -185,6 +199,10 @@ public class BedrockPeer extends ChannelInboundHandlerAdapter {
     }
 
     public void close(CharSequence reason) {
+        if (BedrockTrace.enabled()) {
+            BedrockTrace.log(BedrockTrace.LEVEL_INFO, "session", "closing peer " + this.getSocketAddress()
+                    + ": " + reason);
+        }
         for (BedrockSession session : this.sessions.values()) {
             session.disconnectReason = reason;
         }

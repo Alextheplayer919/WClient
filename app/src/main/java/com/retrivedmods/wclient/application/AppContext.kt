@@ -22,6 +22,12 @@ class AppContext : Application(), Thread.UncaughtExceptionHandler {
         super.onCreate()
         instance = this
 
+        // Console first: it captures stdout/stderr and the vendored transport hooks, so everything from
+        // this point on (including a failure during startup) is on the record.
+        runCatching {
+            com.retrivedmods.wclient.console.ConsoleRuntime.install(this)
+        }
+
         // Android lacks SHA256withECDSAinP1363Format; MinecraftAuth needs it to sign Xbox requests.
         P1363SignatureProvider.install()
 
