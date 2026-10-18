@@ -1,9 +1,9 @@
-# WClient — Anarchy PvP & Config System Improvement Roadmap
+# Neon — Anarchy PvP & Config System Improvement Roadmap
 
 Bedrock anarchy fights come down to three resources — **strength potions, totems, and
 (enchanted) golden apples** — and most fights happen **in the air**. This roadmap focuses
 on automating and hardening those three pillars, plus reworking the config system so
-WClient owns its own directory and configs can be saved in-game at any moment.
+Neon owns its own directory and configs can be saved in-game at any moment.
 
 ---
 
@@ -105,24 +105,24 @@ flag-outs on anarchy servers.
 ### Current state (for reference)
 - One hardcoded file: internal `filesDir/configs/UserConfig.json` (`ModuleManager`).
 - Saved **only** in `MainActivity.onDestroy()` / service stop — a crash loses everything.
-- Export writes timestamped files to `Documents/WClient/configs`
-  (`getWClientConfigsDirectory()`), but that folder is write-only; loading goes through a
+- Export writes timestamped files to `Documents/Neon/configs`
+  (`getNeonConfigsDirectory()`), but that folder is write-only; loading goes through a
   SAF file picker instead.
 - No way to save or switch configs while in a game.
 
-### 4.1 WClient owns its own directory
-- Create **`/storage/emulated/0/WClient/`** (with `configs/`, and room for future
+### 4.1 Neon owns its own directory
+- Create **`/storage/emulated/0/Neon/`** (with `configs/`, and room for future
   `replays/`, `logs/`, `waypoints/`) **once at app startup**, and make it the *primary*
   config home — not just an export target.
 - Scoped-storage strategy: on Android 10+ either request `MANAGE_EXTERNAL_STORAGE`, or
-  keep the public `Documents/WClient` root via the existing helper with
+  keep the public `Documents/Neon` root via the existing helper with
   `getExternalFilesDir()` as a silent fallback — but read **and** write from the same
   place so users can edit configs with any file manager and see changes in-game.
 - Keep internal `filesDir` only as a mirror/backup of the last-good config.
 
 ### 4.2 Named profiles instead of one UserConfig.json
 - `ModuleManager.saveConfig(name)` / `loadConfig(name)` / `listConfigs()` /
-  `deleteConfig(name)` / `renameConfig()` over the WClient directory.
+  `deleteConfig(name)` / `renameConfig()` over the Neon directory.
 - Track the **active profile** and remember it across restarts.
 - Typical anarchy use case: `crystal.json`, `sword-air.json`, `travel.json` — switched
   mid-session.
@@ -157,7 +157,7 @@ flag-outs on anarchy servers.
 | # | Item | Effort | Impact |
 |---|------|--------|--------|
 | 1 | In-game config save (GUI tab + `.config` commands) + auto-save | Medium | Very high |
-| 2 | WClient public directory as primary config home + named profiles | Medium | Very high |
+| 2 | Neon public directory as primary config home + named profiles | Medium | Very high |
 | 3 | AutoTotem pop-reaction rewrite | Low | Very high |
 | 4 | AutoEat (absorption keeper + emergency gap) | Medium | Very high |
 | 5 | AutoPot (strength/fire-res maintenance) | Medium–High | High |

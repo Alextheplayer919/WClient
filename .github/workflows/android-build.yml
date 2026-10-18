@@ -132,16 +132,16 @@ jobs:
         run: |
           mkdir -p out
           SHORT_SHA="${GITHUB_SHA::7}"
-          cp app/build/outputs/apk/debug/*.apk "out/WClient-debug-${SHORT_SHA}.apk"
+          cp app/build/outputs/apk/debug/*.apk "out/Neon-debug-${SHORT_SHA}.apk"
           if ls app/build/outputs/apk/release/*.apk >/dev/null 2>&1; then
-            cp app/build/outputs/apk/release/*.apk "out/WClient-release-${SHORT_SHA}.apk"
+            cp app/build/outputs/apk/release/*.apk "out/Neon-release-${SHORT_SHA}.apk"
           fi
           ls -la out
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: WClient-APK-${{ github.sha }}
+          name: Neon-APK-${{ github.sha }}
           path: out/*.apk
           if-no-files-found: error
           retention-days: 30

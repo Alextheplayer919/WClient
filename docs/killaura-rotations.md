@@ -62,7 +62,7 @@ movement injection were not imported.
 
 ## Verification
 
-JUnit tests are in `app/src/test/java/com/retrivedmods/wclient/game/module/combat/rots`.
+JUnit tests are in `app/src/test/java/com/retrivedmods/neon/game/module/combat/rots`.
 Run `bash gradlew :app:testDebugUnitTest :app:compileDebugKotlin` with JDK 17 and
 an Android SDK configured. This editing environment has no Java installation,
 so these tests and the Android compilation have not been executed here.

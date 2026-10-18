@@ -1,4 +1,4 @@
-# WClient console — what it captures and how to read it
+# Neon console — what it captures and how to read it
 
 The console exists to make a failed join or a freeze explainable from the app itself, without adb, a
 second device or a packet capture. It starts **before** the relay can be started: the app opens on the
@@ -18,8 +18,8 @@ boot console, and everything after that point is recorded.
 so a report can be read from that line: everything above it is the boot state, everything below belongs
 to that capture.
 
-Reports are written to `WClient/console/` on shared storage (falling back to the app-specific folder
-when that is not writable) as `wclient-console_<date>_<time>.txt`.
+Reports are written to `Neon/console/` on shared storage (falling back to the app-specific folder
+when that is not writable) as `neon-console_<date>_<time>.txt`.
 
 ## What is recorded
 

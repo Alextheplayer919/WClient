@@ -27,7 +27,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "WClient"
+rootProject.name = "Neon"
 include(":app")
 include(":relay")
 include(

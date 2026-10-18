@@ -1,6 +1,6 @@
 # WRelay on Minecraft Bedrock 1.21.111 — join timeout + post-join freeze
 
-Branch: `arena/504ef958-wclient` (base `3508be6`, the merge of `#13`) · Date: 2026-10-11
+Branch: `arena/504ef958-neon` (base `3508be6`, the merge of `#13`) · Date: 2026-10-11
 
 > **Status of the first pass (A–D below, merged as #13):** it compiles, it shipped, and it addresses the
 > *first-join timeout* half of the symptom. The **post-join freeze was never caused by any of A–D**, so a
@@ -154,8 +154,8 @@ Second pass (this PR):
 - `relay/Network/transport-raknet/src/main/java/org/cloudburstmc/netty/channel/raknet/RakDisconnectReason.java`
 - `relay/Network/transport-raknet/src/main/java/org/cloudburstmc/netty/channel/raknet/config/{RakChannelOption,RakChannelConfig,DefaultRakSessionConfig}.java`
 - `relay/Network/transport-raknet/src/test/java/org/cloudburstmc/netty/SplitPacketHelperTests.java` (new)
-- `relay/src/main/kotlin/com/retrivedmods/wrelay/{WRelay,WRelaySession}.kt`,
-  `relay/src/main/kotlin/com/retrivedmods/wrelay/connection/ConnectionManager.kt`
+- `relay/src/main/kotlin/com/retrivedmods/neon/relay/{WRelay,WRelaySession}.kt`,
+  `relay/src/main/kotlin/com/retrivedmods/neon/relay/connection/ConnectionManager.kt`
 
 ## How to verify
 
@@ -166,7 +166,7 @@ Second pass (this PR):
    installs the APK.
 
 1. Install the CI build of this branch (`Actions → Android Build → artifact
-   `WClient-APK-<sha>.apk`, containing `WClient-debug-<sha>.apk`) or build
+   `Neon-APK-<sha>.apk`, containing `Neon-debug-<sha>.apk`) or build
    `:app:assembleDebug` locally.
 2. Join a 1.21.111 server and watch logcat. New lines from this pass:
    - `Upstream link: mtu=… maxMessageBytes=…` and `Client link: mtu=… maxMessageBytes=…` at session
