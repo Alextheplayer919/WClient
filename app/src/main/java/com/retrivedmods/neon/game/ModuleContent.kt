@@ -414,7 +414,10 @@ private fun <T : Enum<T>> EnumValueContent(value: EnumValue<T>) {
                 ElevatedFilterChip(
                     selected = value.value == option,
                     onClick = { if (value.value != option) value.value = option },
-                    label = { Text(option.name.translatedSelf) },
+                    label = {
+                        val optionName = (option as? DisplayNamed)?.displayName ?: option.name
+                        Text(optionName.translatedSelf)
+                    },
                     modifier = Modifier.height(32.dp),
                     enabled = true,
                     colors = FilterChipDefaults.filterChipColors(

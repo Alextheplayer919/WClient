@@ -18,6 +18,7 @@ import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket
 import org.cloudburstmc.protocol.bedrock.packet.ItemComponentPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 import org.cloudburstmc.math.vector.Vector2f
+import org.cloudburstmc.math.vector.Vector3f
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket
 import org.cloudburstmc.protocol.bedrock.packet.TextPacket
 import org.cloudburstmc.protocol.bedrock.packet.TickSyncPacket
@@ -149,6 +150,7 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
         consumeTracker.onPacket(packet)
         if (packet is PlayerAuthInputPacket) latency.tick()
 
+        val originalInputRotation = (packet as? PlayerAuthInputPacket)?.rotation
         val interceptablePacket = InterceptablePacket(packet, serverBound)
 
         for (module in ModuleManager.modules) {
@@ -163,35 +165,44 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
         }
 
         if (packet is PlayerAuthInputPacket) {
-            return applySilentRotation(packet)
+            return forwardModifiedInputRotation(packet, originalInputRotation)
         }
 
         return false
     }
 
     /**
-     * Silent rotations: the relay normally forwards the raw bytes of a packet, so editing the
-     * decoded object does nothing. When a combat module requested a rotation we drop the raw
-     * packet and re-send the same (re-encoded) packet with only the rotation replaced. The
-     * client never receives anything, so the player's camera is untouched.
+     * The relay forwards raw input bytes, so direct edits to the decoded packet need an explicit
+     * re-encode. Also retain compatibility with modules that still set [LocalPlayer.silentRotation].
+     * A direct `packet.rotation` edit is sent exactly like that legacy request, without making the
+     * D4C Aura module depend on the silent-rotation field.
      */
-    private fun applySilentRotation(packet: PlayerAuthInputPacket): Boolean {
-        val rotation = localPlayer.silentRotation
+    private fun forwardModifiedInputRotation(
+        packet: PlayerAuthInputPacket,
+        originalRotation: Vector3f?
+    ): Boolean {
+        val directRotationChanged = originalRotation == null ||
+            originalRotation.x != packet.rotation.x ||
+            originalRotation.y != packet.rotation.y ||
+            originalRotation.z != packet.rotation.z
+        val silentRotation = localPlayer.silentRotation
         localPlayer.silentRotation = null
+        // An explicit packet edit wins if another module also left a legacy request this tick.
+        if (!directRotationChanged && silentRotation != null) packet.rotation = silentRotation
 
-        if (rotation == null) {
+        val rotationChanged = directRotationChanged || silentRotation != null
+        if (!rotationChanged) {
             localPlayer.onServerRotationSent(packet.rotation)
             return false
         }
 
-        packet.rotation = rotation
         if (packet.interactRotation != null) {
-            packet.interactRotation = Vector2f.from(rotation.x, rotation.y)
+            packet.interactRotation = Vector2f.from(packet.rotation.x, packet.rotation.y)
         }
-        localPlayer.onServerRotationSent(rotation)
+        localPlayer.onServerRotationSent(packet.rotation)
 
         serverBound(packet)
-        // We intercepted the original, so the relay will not fire the "after" hooks itself.
+        // We intercepted the raw original, so the relay will not fire the "after" hooks itself.
         afterPacketBound(packet)
         return true
     }

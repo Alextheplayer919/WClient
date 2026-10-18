@@ -217,13 +217,21 @@ object ModuleManager {
             val modules = jsonObject["modules"]?.jsonObject ?: return
 
             _modules.forEach { module ->
-                (modules[module.name] as? JsonObject)?.let {
-                    module.fromJson(it)
-                }
+                moduleConfig(modules, module)?.let(module::fromJson)
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    /** Keep renamed modules compatible with profiles saved under their previous IDs. */
+    private fun moduleConfig(configs: JsonObject, module: Module): JsonObject? {
+        (configs[module.name] as? JsonObject)?.let { return it }
+        if (module is KillauraModule) {
+            return listOf("killaura", "kiwi_killaura")
+                .firstNotNullOfOrNull { configs[it] as? JsonObject }
+        }
+        return null
     }
 
     fun exportConfig(): String {
@@ -246,11 +254,7 @@ object ModuleManager {
             val modules = jsonObject["modules"]?.jsonObject ?: return
 
             _modules.forEach { module ->
-                modules[module.name]?.let {
-                    if (it is JsonObject) {
-                        module.fromJson(it)
-                    }
-                }
+                moduleConfig(modules, module)?.let(module::fromJson)
             }
         } catch (e: Exception) {
             throw IllegalArgumentException("Invalid config format: ${e.message}")

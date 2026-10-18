@@ -1,21 +1,32 @@
 package com.retrivedmods.neon.game.module.combat
 
+import com.retrivedmods.neon.game.DisplayNamed
 import com.retrivedmods.neon.game.InterceptablePacket
 import com.retrivedmods.neon.game.Module
 import com.retrivedmods.neon.game.ModuleCategory
 import com.retrivedmods.neon.game.entity.*
 import com.retrivedmods.neon.game.friend.FriendManager
-import com.retrivedmods.neon.game.utils.math.RotationUtils
 import com.retrivedmods.neon.game.module.combat.rots.*
-import org.cloudburstmc.protocol.bedrock.data.PlayerAuthInputData
+import com.retrivedmods.neon.game.utils.math.RotationUtils
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import org.cloudburstmc.math.vector.Vector2f
 import org.cloudburstmc.math.vector.Vector3f
+import org.cloudburstmc.protocol.bedrock.data.PlayerAuthInputData
 import org.cloudburstmc.protocol.bedrock.packet.CorrectPlayerMovePredictionPacket
 import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
+import kotlin.math.abs
+import kotlin.math.asin
+import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.sqrt
 
-class KillauraModule : Module("killaura", ModuleCategory.Combat) {
+/** One aura module hosting existing handlers and Kiwi modes, writing rotations to input packets. */
+class KillauraModule : Module("d4c_aura", ModuleCategory.Combat) {
 
     private var rangeValue by floatValue("range", 7f, 2f..10f)
     private var cpsValue by intValue("cps", 20, 5..30)
@@ -27,10 +38,48 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     private var prediction by boolValue("prediction", true)
     private var autoPrediction by boolValue("auto_prediction", true)
     private var predictionTicks by intValue("prediction_ticks", 2, 0..10)
-    enum class RotationMode { PREDICTIVE, ABYSM, AUTO, SMOOTH, NEMESIS, VORTEX, FRONT_STRAFE, AIR_HVH_PRO, FRONTS_X, ASTRAL, ATOMIC, SYNTAX, CORTEX, ALPHA }
+    enum class RotationMode(override val displayName: String) : DisplayNamed {
+        PREDICTIVE("Predictive"),
+        ABYSM("Abysm"),
+        AUTO("Auto"),
+        SMOOTH("Lynx Smooth"),
+        NEMESIS("Nemesis"),
+        VORTEX("Vortex"),
+        FRONT_STRAFE("FrontStrafe"),
+        AIR_HVH_PRO("AirHvH Pro"),
+        FRONTS_X("FrontsX"),
+        ASTRAL("Astral"),
+        ATOMIC("Atomic"),
+        SYNTAX("Syntax"),
+        CORTEX("Cortex"),
+        ALPHA("Alpha"),
+        HVH_GOD("HvHGod"),
+        GEO_CIRCLE("Circle"),
+        GEO_SQUARE("Square"),
+        GEO_ZIGZAG("Zigzag"),
+        GEO_SPIRAL("Spiral"),
+        KIWI_NONE("None"),
+        KIWI_SNAP("Snap"),
+        KIWI_NORMAL("Normal"),
+        KIWI_SILENT("Silent"),
+        KIWI_BODY("Body"),
+        KIWI_PING_PREDICT("Ping Predict"),
+        KIWI_LEAD_SHOT("Lead Shot"),
+        KIWI_SMOOTH("Smooth"),
+        KIWI_LEGIT("Legit"),
+        KIWI_JITTER("Jitter"),
+        KIWI_STRAFE("Strafe"),
+        KIWI_ANTICIPATE("Anticipate")
+    }
 
     private var rotationMode by enumValue("rotation_mode", RotationMode.PREDICTIVE, RotationMode::class.java)
     private var verticalOffset by floatValue("vertical_offset", 0.3f, -1f..2f)
+
+    // Settings used by the imported Kiwi-style rotation handlers.
+    private var randomizeRotations by boolValue("randomize", false)
+    private var smoothSpeed by floatValue("smooth_speed", 15f, 1f..45f)
+    private var strafeAmplitude by floatValue("strafe_amp", 8f, 0f..30f)
+    private var cameraSync by boolValue("camera_sync", true)
 
     private var predictionStrength by floatValue("prediction_strength", 1f, 0f..1.5f)
     private var rotationSmoothing by floatValue("rotation_smoothing", 0.35f, 0.05f..1f)
@@ -69,6 +118,9 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     private var rotationContext: KillauraRots.Ctx? = null
     private var rotationTarget: Long? = null
     private var previousRotationMode: RotationMode? = null
+    private var rotationTickCounter = 0L
+    private var smoothYaw = 0f
+    private var smoothPitch = 0f
 
     private fun resetRotations() {
         rotationEngine.resetState()
@@ -91,7 +143,49 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     internal val isStrafing: Boolean
         get() = strafe && orbitCommanded
 
+    /** Import the title-cased Kiwi settings used by the merged rotation modes. */
+    override fun fromJson(jsonElement: JsonElement) {
+        val moduleObject = jsonElement as? JsonObject ?: return super.fromJson(jsonElement)
+        val sourceValues = moduleObject["values"] as? JsonObject ?: return super.fromJson(jsonElement)
+        val migratedValues = sourceValues.toMutableMap()
 
+        fun copyValue(currentName: String, legacyName: String) {
+            if (currentName !in migratedValues) {
+                sourceValues[legacyName]?.let { migratedValues[currentName] = it }
+            }
+        }
+
+        copyValue("range", "Range")
+        copyValue("cps", "CPS")
+        copyValue("packets", "Packets")
+        copyValue("players_only", "Players Only")
+        copyValue("anti_bot", "Anti Bot")
+        copyValue("randomize", "Randomize")
+        copyValue("smooth_speed", "Smooth Speed")
+        copyValue("strafe_amp", "Strafe Amp")
+        copyValue("camera_sync", "Camera Sync")
+        copyValue("vertical_offset", "Vertical Offset")
+        copyValue("prediction_strength", "Pred Strength")
+        copyValue("rotation_smoothing", "Rot Smoothing")
+        copyValue("rotation_max_speed", "Rot Max Speed")
+        copyValue("rotation_acceleration", "Rot Accel")
+
+        if ("prediction_ticks" !in migratedValues) {
+            val predictionTime = (sourceValues["Pred Time"] as? JsonPrimitive)?.content?.toFloatOrNull()
+            if (predictionTime != null) migratedValues["prediction_ticks"] = JsonPrimitive(predictionTime.toInt())
+        }
+        if ("rotation_mode" !in migratedValues) {
+            val legacyMode = (sourceValues["Rot Mode"] as? JsonPrimitive)?.content
+            val migratedMode = legacyMode?.let { mode ->
+                LEGACY_ROTATION_MODES.entries.firstOrNull { it.key.equals(mode, ignoreCase = true) }?.value
+            }
+            if (migratedMode != null) migratedValues["rotation_mode"] = JsonPrimitive(migratedMode)
+        }
+
+        val migratedObject = moduleObject.toMutableMap()
+        migratedObject["values"] = JsonObject(migratedValues)
+        super.fromJson(JsonObject(migratedObject))
+    }
 
     private fun Player.isBot(): Boolean {
 
@@ -119,6 +213,7 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
         super.onEnabled()
         lastAttackTime = 0L
         tpCooldown = 0L
+        rotationTickCounter = 0L
         orbit.reset()
         orbitCommanded = false
         resetRotations()
@@ -126,12 +221,14 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
     override fun onDisabled() {
         super.onDisabled()
+        rotationTickCounter = 0L
         orbit.reset()
         orbitCommanded = false
         resetRotations()
     }
 
     override fun onDisconnect(reason: String) {
+        rotationTickCounter = 0L
         orbit.reset()
         orbitCommanded = false
         resetRotations()
@@ -157,11 +254,14 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
         val targets = searchForTargets()
             .filterNot { it is Player && FriendManager.isFriend(it.uuid) }.toMutableList()
-        if (previousRotationMode != rotationMode || packet.tick < lastRotationTick) {
+        val tickRolledBack = packet.tick < lastRotationTick
+        if (previousRotationMode != rotationMode || tickRolledBack) {
             resetRotations()
             previousRotationMode = rotationMode
+            if (tickRolledBack) rotationTickCounter = 0L
         }
         lastRotationTick = packet.tick
+        rotationTickCounter++
         if (!rotations) resetRotations()
         if (targets.isEmpty()) {
             orbit.reset()
@@ -178,13 +278,15 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
         val tick = packet.tick
         predictiveRotator.selectTarget(targets, player, tick)
         val primary = targets.first()
-        if (rotations && (rotationMode == RotationMode.ABYSM || rotationMode == RotationMode.AUTO)) {
+        if (rotations && (rotationMode == RotationMode.ABYSM || rotationMode == RotationMode.AUTO ||
+                    rotationMode == RotationMode.HVH_GOD)) {
             targets.forEach { styleSelector.observe(it.runtimeEntityId, it.rotationYaw, it.posX, feetY(it), it.posZ, tick) }
             styleSelector.retain(targets.map { it.runtimeEntityId })
         }
+        var shouldAttack = true
         if (rotations) {
             if (rotationMode == RotationMode.PREDICTIVE) applyPredictiveRotation(targets, packet)
-            else applyRotations(player, primary, packet)
+            else shouldAttack = applyRotations(player, primary, packet)
         } else {
             resetRotations()
         }
@@ -194,6 +296,8 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
             orbitCommanded = false
             orbit.reset()
         }
+
+        if (!shouldAttack) return
 
         val now = System.currentTimeMillis()
         val delay = 1000L / cpsValue
@@ -216,9 +320,9 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
     }
 
 
-    /** Adapt Bedrock eye-level player positions and packet deltas to the uploaded engine. */
-    private fun applyRotations(player: LocalPlayer, target: Entity, packet: PlayerAuthInputPacket) {
-        val selected = if (rotationMode == RotationMode.AUTO) {
+    /** Adapt Bedrock eye-level player positions and packet deltas to the uploaded engines. */
+    private fun applyRotations(player: LocalPlayer, target: Entity, packet: PlayerAuthInputPacket): Boolean {
+        val selected = if (rotationMode == RotationMode.AUTO || rotationMode == RotationMode.HVH_GOD) {
             when (styleSelector.pick(target.runtimeEntityId, player.posX, player.posZ, packet.tick)) {
                 "Atomic" -> RotationMode.ATOMIC
                 "Cortex" -> RotationMode.CORTEX
@@ -227,6 +331,7 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
                 "FrontStrafe" -> RotationMode.FRONT_STRAFE
                 "Astral" -> RotationMode.ASTRAL
                 "Lynx Smooth" -> RotationMode.SMOOTH
+                "FrontsX" -> RotationMode.FRONTS_X
                 else -> RotationMode.FRONTS_X
             }
         } else rotationMode
@@ -240,19 +345,36 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
         }
         if (selected == RotationMode.ABYSM) {
             styleSelector.pick(target.runtimeEntityId, player.posX, player.posZ, packet.tick)
-            abysm.maxSpeed = rotationMaxSpeed
-            // The existing prediction switch/time applies to Abysm too; disable its built-in
-            // fixed lead and feed a single, explicitly controlled predicted position.
-            val lead = lookaheadTicks()
+            val targetChestY = feetY(target) + if (target is Player) height(target) * 0.6f else 0.9f
             val (pitch, yaw) = abysm.aim(
-                target.posX + target.motionX * lead,
-                feetY(target) + height(target) * 0.55f + verticalOffset + target.motionY * lead,
-                target.posZ + target.motionZ * lead,
-                0f, 0f, 0f, player.posX, player.posY, player.posZ, styleSelector.lastStyle
+                target.posX, targetChestY, target.posZ,
+                target.motionX, target.motionY, target.motionZ,
+                player.posX, player.posY, player.posZ, styleSelector.lastStyle
             )
-            publishRotation(pitch, yaw, yaw)
-            return
+            applyPacketRotation(packet, pitch, yaw, yaw)
+            return true
         }
+
+        val geoPattern = when (selected) {
+            RotationMode.GEO_CIRCLE -> "Circle"
+            RotationMode.GEO_SQUARE -> "Square"
+            RotationMode.GEO_ZIGZAG -> "Zigzag"
+            RotationMode.GEO_SPIRAL -> "Spiral"
+            else -> null
+        }
+        if (geoPattern != null) {
+            val (offsetX, offsetY, offsetZ) = GeoRot.offset(geoPattern, packet.tick)
+            val chestY = feetY(target) + if (target is Player) height(target) * 0.6f else 0.9f
+            val (pitch, yaw) = abysm.aim(
+                target.posX + offsetX, chestY + offsetY, target.posZ + offsetZ,
+                0f, 0f, 0f, player.posX, player.posY, player.posZ, HvHGod.Style.UNKNOWN
+            )
+            applyPacketRotation(packet, pitch, yaw, yaw)
+            return true
+        }
+
+        if (selected.isKiwiMode()) return applyKiwiRotation(selected, player, target, packet)
+
         val lookahead = lookaheadTicks()
         val last = rotationContext
         val ctx = KillauraRots.Ctx(
@@ -292,7 +414,7 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
             RotationMode.SYNTAX -> rotationEngine.syntax(ctx, snapshot, env)
             RotationMode.CORTEX -> rotationEngine.cortex(ctx, snapshot, env)
             RotationMode.ALPHA -> rotationEngine.alpha(ctx, snapshot, env)
-            else -> return // Predictive and Abysm are handled above; AUTO resolves to a handler.
+            else -> return true // Predictive, Abysm, geometric, and Kiwi modes are handled above.
         }
         // These source handlers only output pitch/body yaw; keep the head aligned rather
         // than retaining an unrelated head yaw from the last packet.
@@ -302,11 +424,120 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
         }
         if (ctx.rotPitch.isFinite() && ctx.rotYaw.isFinite() && ctx.headYaw.isFinite()) {
             rotationContext = ctx
-            player.silentRotation = Vector3f.from(ctx.rotPitch.coerceIn(-90f, 90f), ctx.rotYaw, ctx.headYaw)
+            applyPacketRotation(packet, ctx.rotPitch, ctx.rotYaw, ctx.headYaw)
         } else {
             resetRotations()
         }
+        return true
     }
+
+    private fun RotationMode.isKiwiMode(): Boolean = when (this) {
+        RotationMode.KIWI_NONE,
+        RotationMode.KIWI_SNAP,
+        RotationMode.KIWI_NORMAL,
+        RotationMode.KIWI_SILENT,
+        RotationMode.KIWI_BODY,
+        RotationMode.KIWI_PING_PREDICT,
+        RotationMode.KIWI_LEAD_SHOT,
+        RotationMode.KIWI_SMOOTH,
+        RotationMode.KIWI_LEGIT,
+        RotationMode.KIWI_JITTER,
+        RotationMode.KIWI_STRAFE,
+        RotationMode.KIWI_ANTICIPATE -> true
+        else -> false
+    }
+
+    /** Kiwi handlers keep their original formulas and write directly to the current input packet. */
+    private fun applyKiwiRotation(
+        mode: RotationMode, player: LocalPlayer, target: Entity, packet: PlayerAuthInputPacket
+    ): Boolean {
+        if (mode == RotationMode.KIWI_NONE) return false
+
+        val eye = Vector3f.from(player.posX, player.posY, player.posZ)
+        val (pitch, yaw) = calcAngle(eye, kiwiChestPosition(target))
+        val outPitch: Float
+        val outYaw: Float
+
+        when (mode) {
+            RotationMode.KIWI_SNAP,
+            RotationMode.KIWI_NORMAL,
+            RotationMode.KIWI_SILENT,
+            RotationMode.KIWI_BODY,
+            RotationMode.KIWI_PING_PREDICT,
+            RotationMode.KIWI_LEAD_SHOT -> {
+                var adjustedPitch = pitch
+                var adjustedYaw = yaw
+                if (randomizeRotations) {
+                    adjustedPitch += (kotlin.random.Random.nextFloat() - 0.5f) * 14f
+                    adjustedYaw += (kotlin.random.Random.nextFloat() - 0.5f) * 14f
+                }
+                smoothPitch = adjustedPitch
+                smoothYaw = adjustedYaw
+                outPitch = adjustedPitch
+                outYaw = adjustedYaw
+            }
+            RotationMode.KIWI_JITTER -> {
+                outPitch = pitch + (kotlin.random.Random.nextFloat() - 0.5f) * 14f
+                outYaw = yaw + (kotlin.random.Random.nextFloat() - 0.5f) * 14f
+            }
+            RotationMode.KIWI_SMOOTH,
+            RotationMode.KIWI_LEGIT -> {
+                var deltaYaw = yaw - smoothYaw
+                while (deltaYaw > 180f) deltaYaw -= 360f
+                while (deltaYaw < -180f) deltaYaw += 360f
+                if (abs(deltaYaw) > smoothSpeed) {
+                    deltaYaw = if (deltaYaw > 0f) smoothSpeed else -smoothSpeed
+                }
+                smoothYaw += deltaYaw
+                smoothPitch += (pitch - smoothPitch) * 0.3f
+                if (mode == RotationMode.KIWI_LEGIT && abs(deltaYaw) < 5f) {
+                    smoothPitch += (kotlin.random.Random.nextFloat() - 0.5f) * 3f
+                    smoothYaw += (kotlin.random.Random.nextFloat() - 0.5f) * 3f
+                }
+                outPitch = smoothPitch
+                outYaw = smoothYaw
+            }
+            RotationMode.KIWI_STRAFE -> {
+                val dx = target.posX - eye.x
+                val dz = target.posZ - eye.z
+                val scale = min(sqrt(dx * dx + dz * dz) / 6f, 1f)
+                outYaw = sin(rotationTickCounter * 0.35f) * strafeAmplitude * scale + yaw
+                outPitch = pitch + cos(rotationTickCounter * 0.22f) * strafeAmplitude * 0.25f * scale
+            }
+            RotationMode.KIWI_ANTICIPATE -> {
+                val yawRadians = Math.toRadians(target.vec3Rotation.y.toDouble())
+                val ahead = Vector3f.from(
+                    target.posX - sin(yawRadians).toFloat() * ANTICIPATE_DEPTH,
+                    kiwiChestPosition(target).y,
+                    target.posZ + cos(yawRadians).toFloat() * ANTICIPATE_DEPTH
+                )
+                val (aheadPitch, aheadYaw) = calcAngle(eye, ahead)
+                outPitch = aheadPitch
+                outYaw = aheadYaw
+            }
+            else -> return false
+        }
+
+        applyPacketRotation(packet, outPitch, outYaw, outYaw)
+        return true
+    }
+
+    /** (pitch, yaw) in degrees using the uploaded Kiwi angle convention. */
+    private fun calcAngle(from: Vector3f, to: Vector3f): Pair<Float, Float> {
+        val x = (to.x - from.x).toDouble()
+        val y = (to.y - from.y).toDouble()
+        val z = (to.z - from.z).toDouble()
+        val distance = sqrt(x * x + y * y + z * z)
+        val pitch = if (distance > 0.001) (-asin(y / distance) * RAD2DEG).toFloat() else 0f
+        val yaw = (-atan2(x, z) * RAD2DEG).toFloat()
+        return pitch to yaw
+    }
+
+    private fun kiwiChestPosition(target: Entity): Vector3f = Vector3f.from(
+        target.posX,
+        feetY(target) + if (target is Player) height(target) * 0.5f else 0.9f,
+        target.posZ
+    )
 
     private fun lookaheadTicks(): Float = if (!prediction) 0f else if (autoPrediction) {
         (session.latency.lookaheadTicks + session.hitTracker.predictionOffsetTicks).coerceIn(0f, 10f)
@@ -316,16 +547,20 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
         val settings = PredictiveRotator.Settings(
             predTime = lookaheadTicks(), predStrength = predictionStrength,
             smoothing = rotationSmoothing, maxSpeed = rotationMaxSpeed,
-            accel = rotationAcceleration, vertOffset = verticalOffset
+            accel = rotationAcceleration, cameraSync = cameraSync, vertOffset = verticalOffset
         )
         if (predictiveRotator.update(session, packet, targets, settings)) {
-            publishRotation(predictiveRotator.pitch, predictiveRotator.yaw, predictiveRotator.yaw)
+            applyPacketRotation(packet, predictiveRotator.pitch, predictiveRotator.yaw, predictiveRotator.yaw)
         }
     }
 
-    private fun publishRotation(pitch: Float, yaw: Float, headYaw: Float) {
+    private fun applyPacketRotation(packet: PlayerAuthInputPacket, pitch: Float, yaw: Float, headYaw: Float) {
         if (pitch.isFinite() && yaw.isFinite() && headYaw.isFinite()) {
-            session.localPlayer.silentRotation = Vector3f.from(pitch.coerceIn(-90f, 90f), yaw, headYaw)
+            val rotation = Vector3f.from(pitch.coerceIn(-90f, 90f), yaw, headYaw)
+            packet.rotation = rotation
+            if (packet.interactRotation != null) {
+                packet.interactRotation = Vector2f.from(rotation.x, rotation.y)
+            }
         } else resetRotations()
     }
 
@@ -400,5 +635,44 @@ class KillauraModule : Module("killaura", ModuleCategory.Combat) {
 
     private fun EntityUnknown.isMob(): Boolean {
         return this.identifier in MobList.mobTypes
+    }
+
+    private companion object {
+        const val RAD2DEG = 57.29577951308232
+        const val ANTICIPATE_DEPTH = 3f
+
+        val LEGACY_ROTATION_MODES = mapOf(
+            "Predictive" to RotationMode.PREDICTIVE.name,
+            "Abysm" to RotationMode.ABYSM.name,
+            "Auto" to RotationMode.AUTO.name,
+            "HvHGod" to RotationMode.HVH_GOD.name,
+            "Circle" to RotationMode.GEO_CIRCLE.name,
+            "Square" to RotationMode.GEO_SQUARE.name,
+            "Zigzag" to RotationMode.GEO_ZIGZAG.name,
+            "Spiral" to RotationMode.GEO_SPIRAL.name,
+            "None" to RotationMode.KIWI_NONE.name,
+            "Snap" to RotationMode.KIWI_SNAP.name,
+            "Normal" to RotationMode.KIWI_NORMAL.name,
+            "Silent" to RotationMode.KIWI_SILENT.name,
+            "Body" to RotationMode.KIWI_BODY.name,
+            "Ping Predict" to RotationMode.KIWI_PING_PREDICT.name,
+            "Lead Shot" to RotationMode.KIWI_LEAD_SHOT.name,
+            "Smooth" to RotationMode.KIWI_SMOOTH.name,
+            "Legit" to RotationMode.KIWI_LEGIT.name,
+            "Jitter" to RotationMode.KIWI_JITTER.name,
+            "Strafe" to RotationMode.KIWI_STRAFE.name,
+            "Anticipate" to RotationMode.KIWI_ANTICIPATE.name,
+            "Lynx Smooth" to RotationMode.SMOOTH.name,
+            "Nemesis" to RotationMode.NEMESIS.name,
+            "Vortex" to RotationMode.VORTEX.name,
+            "FrontStrafe" to RotationMode.FRONT_STRAFE.name,
+            "AirHvH Pro" to RotationMode.AIR_HVH_PRO.name,
+            "FrontsX" to RotationMode.FRONTS_X.name,
+            "Astral" to RotationMode.ASTRAL.name,
+            "Atomic" to RotationMode.ATOMIC.name,
+            "Syntax" to RotationMode.SYNTAX.name,
+            "Cortex" to RotationMode.CORTEX.name,
+            "Alpha" to RotationMode.ALPHA.name
+        )
     }
 }

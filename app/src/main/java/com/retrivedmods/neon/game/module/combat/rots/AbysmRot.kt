@@ -10,15 +10,19 @@ import kotlin.math.sign
 
 /** Proportional, speed-capped tracking with target-style multipliers.
  * State belongs to one Killaura instance. This is not an acceleration-limited engine;
- * use PredictiveAim for angular velocity/acceleration tracking. No random noise.
+ * use PredictiveAim for angular velocity/acceleration tracking.
  */
 class AbysmRot {
 
     /** Grados maximos por tick antes de multiplicar por el estilo. */
     @Volatile var maxSpeed = 35f
 
+    /** Optional noise from the uploaded implementation. Zero keeps the base rotation deterministic. */
+    @Volatile var humanize = 0f
+
     private var yaw = Float.NaN
     private var pitch = 0f
+    private val rnd = java.util.Random()
 
     /** Llamar cuando no hay objetivo, para que al volver a agarrar uno no arrastre el giro viejo. */
     fun reset() {
@@ -67,6 +71,10 @@ class AbysmRot {
         yaw = wrap180(yaw + step(wrap180(wantYaw - yaw), cap))
         pitch = (pitch + step(wantPitch - pitch, cap)).coerceIn(-90f, 90f)
 
+        if (humanize > 0f) {
+            yaw = wrap180(yaw + (rnd.nextFloat() - 0.5f) * humanize)
+            pitch = (pitch + (rnd.nextFloat() - 0.5f) * humanize * 0.5f).coerceIn(-90f, 90f)
+        }
         return pitch to yaw
     }
 
