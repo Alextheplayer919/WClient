@@ -95,7 +95,7 @@ do in an afternoon, big enough that a blind `cp -r` will not work.
    `BedrockPacketType`/`BedrockPacketHandler`/enum additions). Prefer bumping the whole vendored
    tree to a pinned upstream tag and re-applying the two mechanical patches (visibility sweep;
    AWT-free `PlayerList*`) as a script.
-2. `relay/src/main/kotlin/com/retrivedmods/wrelay/codec/CodecRegistry.kt` — add
+2. `relay/src/main/kotlin/com/retrivedmods/neon/relay/codec/CodecRegistry.kt` — add
    `registerCodec(924, "1.26.1", …)`, `registerCodec(944, "1.26.10", …)`. Note the existing entries
    stop at 898 and there is a stray blank line pair where the next ones go; the reflective
    `Class.forName` + `CODEC` lookup means a missing class only logs
@@ -184,7 +184,7 @@ updated, **79** added, **6** files touched in `app/` + `relay/src`.
 * The vendored tree is *not* a clean snapshot of one upstream commit, so every file went through a
   real 3-way merge (`git merge-file`, base `01a2b1be` → end `ccb85d2e`, local as ours): 38 files were
   already at base state and fast-forwarded, 6 auto-merged, **9 conflicted** and were resolved as
-  "upstream's body + WClient's `private`→`public` field sweep re-applied by declaration text"
+  "upstream's body + Neon's `private`→`public` field sweep re-applied by declaration text"
   (StartGame 82 fields, InventoryTransaction 17, ServerboundDiagnostics 9, GraphicsParameterOverride 4,
   UpdateClientInputLocks 2, UpdateSubChunkBlocks 5→2 where three fields no longer exist upstream).
   Where local was simply *older* than base (`BedrockPacketType`, `BedrockPacketHandler`,
@@ -217,7 +217,7 @@ updated, **79** added, **6** files touched in `app/` + `relay/src`.
 
 * Latent bug fixed on the way: `CodecRegistry.getClosestCodec` used `findLast` on a **descending**
   list, so any unregistered protocol (950, 975, 900) got the **291 / 1.2.0** codec. Now `firstOrNull`,
-  pinned by `relay/src/test/kotlin/com/retrivedmods/wrelay/codec/CodecRegistryTest.kt` — the relay
+  pinned by `relay/src/test/kotlin/com/retrivedmods/neon/relay/codec/CodecRegistryTest.kt` — the relay
   module's first unit test. Failed codec loads are recorded in
   `CodecRegistry.unregisteredProtocols` and printed to stderr instead of only `println`-ing.
 

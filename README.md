@@ -1,19 +1,19 @@
-# WClient - #1 Utility Client for MCPE
+# Neon - #1 Utility Client for MCPE
 
 ![MCPE](https://img.shields.io/badge/Minecraft-Bedrock-green?logo=minecraft&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-MCPE-orange)
 ![Kotlin](https://img.shields.io/badge/Code-Kotlin-7F52FF?logo=kotlin&logoColor=white)
 ![License](https://img.shields.io/badge/License-GNU%20GPLv3-blue?logo=gnu&logoColor=white)
 
-**WClient** is a modular, high-performance utility client designed for **Minecraft Bedrock Edition**. Built with a strong focus on stability, packet-level control, and extensibility, WClient delivers advanced combat, movement, and visual enhancements while maintaining a clean, maintainable architecture.
+**Neon** is a modular, high-performance utility client designed for **Minecraft Bedrock Edition**. Built with a strong focus on stability, packet-level control, and extensibility, Neon delivers advanced combat, movement, and visual enhancements while maintaining a clean, maintainable architecture.
 
-WClient does **not** modify game memory directly and is engineered for compatibility across multiple Bedrock environments.
+Neon does **not** modify game memory directly and is engineered for compatibility across multiple Bedrock environments.
 
 > [!CAUTION]
 > **This isn't the end.**
 >
 > It's just no longer public.
-> WClient is actively developed behind closed doors.
+> Neon is actively developed behind closed doors.
 > This repository stays online as a legacy archive.
 
 ## Our Team
@@ -26,7 +26,7 @@ Flexy H6X (Developer)
 
 ## Platform Support
 
-WClient is primarily developed and tested for **Android**, but can interface with other platforms using MITM-style packet interception depending on setup.
+Neon is primarily developed and tested for **Android**, but can interface with other platforms using MITM-style packet interception depending on setup.
 
 Supported:
 
@@ -35,7 +35,7 @@ Supported:
 
 ## Module Categories
 
-WClient modules are organized into the following categories:
+Neon modules are organized into the following categories:
 
 * **Combat** - PvP enhancements and automated combat logic
 * **Motion** - Mobility and speed modules
@@ -44,7 +44,7 @@ WClient modules are organized into the following categories:
 
 ## GUI and Configuration
 
-WClient supports dynamic configuration via JSON files, allowing runtime customization of modules, thresholds, ranges, and behavior.
+Neon supports dynamic configuration via JSON files, allowing runtime customization of modules, thresholds, ranges, and behavior.
 
 Example:
 
@@ -59,8 +59,9 @@ Example:
 
 ## Console
 
-WClient records everything from the moment the relay is switched on, in a console that lives right
-where you pick the Minecraft version and the server address:
+Neon provides optional diagnostics in a console next to the Minecraft version and server
+address. Recording is **off by default**; use **Record / Stop** on Home or the Console page.
+Your choice persists across launches. When off, no in-game console button/window is created.
 
 * **Home page panel** - next to the version/server card: `RECORDING` state, live packet counters and
   the last lines, with `save report` and a button to float it over the game.
@@ -75,12 +76,12 @@ It captures app code logs, the relay's RakNet and Bedrock layers (handshake and 
 reassembly, acks/nacks/resends, compression and encryption switches, timeouts and disconnect
 reasons), and every forwarded packet with its direction, wire size and packet id. A watchdog reports
 stalls by shape: link dead, downstream starved (the "everyone froze" case) or the game never reached
-the relay. Reports are saved to `WClient/console/` and the whole picture is described in
+the relay. Reports are saved to `Neon/console/` and the whole picture is described in
 [docs/CONSOLE.md](docs/CONSOLE.md).
 
 ## License
 
-WClient is licensed under the **GNU General Public License v3.0 (GPLv3)**.
+Neon is licensed under the **GNU General Public License v3.0 (GPLv3)**.
 
 ### Permitted
 
@@ -110,15 +111,15 @@ Users are responsible for ensuring compliance with local laws and server rules.
 
 ## Contributions
 
-Contributions are welcome. Bug reports, feature suggestions, and pull requests help improve WClient.
+Contributions are welcome. Bug reports, feature suggestions, and pull requests help improve Neon.
 
 ## Community & Support
 
-Join the WClient community for support, updates, and discussions:
+Join the Neon community for support, updates, and discussions:
 
 Discord: [https://discord.gg/wclient](https://discord.gg/jVWPuDvdRX)
 
-*WClient is not affiliated with Mojang Studios or Microsoft.*
+*Neon is not affiliated with Mojang Studios or Microsoft.*
 
 ### PopCounter and Chat Suffix
 
@@ -138,7 +139,7 @@ Both modules are under **Misc** and are disabled by default.
   `> there goes your totem | abc123...`, not a formatting color code or `&gt;`.
 - **Chat Suffix** puts its editable, single-line **Text** at the **start** of
   ordinary outgoing player chat (despite the module name). Edit it live in the
-  in-game WClient click-GUI overlay under **Misc → Chat Suffix**. When enabled,
+  in-game Neon click-GUI overlay under **Misc → Chat Suffix**. When enabled,
   the next sent message uses the new text without a restart or re-toggle. It
   accepts arbitrary text, subject to chat/server limits, and can add green chat
   and a random alphanumeric tail. The text, the message, and the random tail are
@@ -146,3 +147,9 @@ Both modules are under **Misc** and are disabled by default.
   Server `/commands` and client `.commands`
   stay untouched, and incoming chat is never rewritten. It does not modify
   module-generated chat; PopCounter has its own green-chat setting and random tail.
+
+## Neon package and icon
+
+Neon uses `com.retrivedmods.neon` and installs separately from WClient. Replace
+`app/src/main/res/drawable/neon_launcher.png` with your PNG artwork to change the
+APK launcher icon and overlay logo. See [branding instructions](docs/NEON-BRANDING.md).

@@ -9,7 +9,7 @@
 }
 -keep class net.raphimc.minecraftauth.** { *; }
 -keep class net.lenni0451.commons.httpclient.** { *; }
--keep class com.retrivedmods.wclient.game.AccountManager { *; }
+-keep class com.retrivedmods.neon.game.AccountManager { *; }
 
 # JJWT (MinecraftAuth fallback signer) resolves implementations reflectively / via ServiceLoader.
 -keep class io.jsonwebtoken.** { *; }
@@ -18,5 +18,5 @@
 -keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
 
 # Our JCA provider is instantiated by name by java.security.Signature.
--keep class com.retrivedmods.wclient.util.P1363SignatureProvider { *; }
--keep class com.retrivedmods.wclient.util.P1363SignatureProvider$P1363Spi { *; }
+-keep class com.retrivedmods.neon.util.P1363SignatureProvider { *; }
+-keep class com.retrivedmods.neon.util.P1363SignatureProvider$P1363Spi { *; }

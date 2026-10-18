@@ -1,0 +1,348 @@
+package com.retrivedmods.neon.relay
+
+import com.retrivedmods.neon.relay.listener.WRelayPacketListener
+import com.retrivedmods.neon.trace.WPacketStats
+import com.retrivedmods.neon.trace.WTrace
+import io.netty.util.internal.PlatformDependent
+import net.kyori.adventure.text.Component
+import org.cloudburstmc.netty.handler.codec.raknet.common.RakSessionCodec
+import org.cloudburstmc.protocol.bedrock.BedrockClientSession
+import org.cloudburstmc.protocol.bedrock.BedrockPeer
+import org.cloudburstmc.protocol.bedrock.BedrockServerSession
+import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper
+import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket
+import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler
+import org.cloudburstmc.protocol.bedrock.packet.UnknownPacket
+import java.util.*
+
+
+class WRelaySession internal constructor(
+    peer: BedrockPeer,
+    subClientId: Int,
+    val wRelay: WRelay
+) {
+
+    val server = ServerSession(peer, subClientId)
+
+    var client: ClientSession? = null
+        internal set(value) {
+            value?.let {
+                try {
+                    it.codec = server.codec
+                    it.peer.codecHelper.blockDefinitions = server.peer.codecHelper.blockDefinitions
+                    it.peer.codecHelper.itemDefinitions = server.peer.codecHelper.itemDefinitions
+                    it.peer.codecHelper.cameraPresetDefinitions = server.peer.codecHelper.cameraPresetDefinitions
+                    it.peer.codecHelper.encodingSettings = server.peer.codecHelper.encodingSettings
+
+                    var pair: Pair<BedrockPacket, Boolean>
+                    var processedCount = 0
+                    while (packetQueue.poll().also { packetPair -> pair = packetPair } != null) {
+                        try {
+                            if (pair.second) {
+                                it.sendPacketImmediately(pair.first)
+                            } else {
+                                it.sendPacket(pair.first)
+                            }
+                            processedCount++
+                        } catch (e: Exception) {
+                            println("Failed to send queued packet: ${e.message}")
+                        }
+                    }
+                    if (processedCount > 0) {
+                        println("Processed $processedCount queued packets")
+                        WTrace.info("relay", "upstream link up: flushed $processedCount queued packet(s) to the server")
+                    }
+                } catch (e: Exception) {
+                    println("Failed to initialize client session: ${e.message}")
+                    e.printStackTrace()
+                }
+            }
+            field = value
+        }
+
+    val listeners: MutableList<WRelayPacketListener> = ArrayList()
+
+    private val packetQueue: Queue<Pair<BedrockPacket, Boolean>> = PlatformDependent.newMpscQueue()
+    private val maxQueueSize = 1000
+
+    /**
+     * Round trip time (ms) of the upstream RakNet link as measured by the transport itself
+     * (ConnectedPing is sent every 2 seconds by [RakSessionCodec]).
+     *
+     * Null until the first pong arrives. This is the fallback RTT source for application protocols
+     * that no longer ship an in-band probe: TickSync was deregistered in protocol 685, so writing it
+     * on a modern server would fail inside the encoder.
+     */
+    val upstreamPingMs: Long?
+        get() = runCatching {
+            client?.peer?.channel?.pipeline()?.get(RakSessionCodec::class.java)?.ping?.takeIf { it > 0L }
+        }.getOrNull()
+
+    /**
+     * MTU and split budget of the RakNet link on [peer], for the log.
+     *
+     * Both links cap a single message at a fixed number of split parts, so how much payload a link can carry
+     * is a function of its negotiated MTU. A batch over that limit is dropped by the transport (never sent half
+     * way), because a Bedrock client acknowledges every part of an oversized message and then throws the message
+     * away, which stalls that ordering channel for good - the post-join freeze. Logging the real numbers turns
+     * "the world never loads" into "the link can only carry N bytes per message".
+     */
+    fun describeLink(name: String, peer: BedrockPeer?): String {
+        val codec = runCatching { peer?.channel?.pipeline()?.get(RakSessionCodec::class.java) }
+            .getOrNull() ?: return "$name: RakNet session not ready"
+        return runCatching {
+            "$name: mtu=${codec.mtu} maxMessageBytes=${codec.maxMessageSize}"
+        }.getOrElse { "$name: RakNet session not measurable (${it.javaClass.simpleName})" }
+    }
+
+    /**
+     * One-line state of both links, for the console's periodic status line and the stall watchdog.
+     *
+     * "Upstream connected? / game client connected? / MTU of each / RTT / packets each way / how long
+     * since the last packet" is exactly the information needed to tell a dead upstream link from a
+     * stalled game link.
+     */
+    fun linkSnapshot(): String {
+        val upstream = runCatching {
+            val session = client ?: return@runCatching "upstream=connecting"
+            val mtu = runCatching { session.peer.channel.pipeline().get(RakSessionCodec::class.java)?.mtu }.getOrNull()
+            "upstream=connected(mtu=$mtu, rtt=${upstreamPingMs ?: "?"}ms)"
+        }.getOrElse { "upstream=unknown(${it.javaClass.simpleName})" }
+
+        val game = runCatching {
+            val mtu = server.peer.channel.pipeline().get(RakSessionCodec::class.java)?.mtu
+            "client=connected(mtu=$mtu)"
+        }.getOrElse { "client=unknown(${it.javaClass.simpleName})" }
+
+        val now = System.currentTimeMillis()
+        val lastToClient = stats.lastToClientMs().takeIf { it > 0L }?.let { "${now - it}ms ago" } ?: "never"
+        val lastToServer = stats.lastToServerMs().takeIf { it > 0L }?.let { "${now - it}ms ago" } ?: "never"
+
+        return "$upstream $game linkPackets=${stats.totalToServer()}↑/${stats.totalToClient()}↓ " +
+            "lastUp=$lastToServer lastDown=$lastToClient queued=${packetQueue.size}"
+    }
+
+    /** Packet counters of this session, shared with the console's packet panel. */
+    val stats: WPacketStats
+        get() = WTrace.stats
+
+    /**
+     * True when the negotiated codec can encode [packet]. Pre-encoded [UnknownPacket]s are always
+     * accepted. Packets missing from the codec (for example TickSync on protocol >= 685) would make
+     * the Netty encoder throw, so callers should drop them instead of writing them.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun isEncodable(packet: BedrockPacket): Boolean {
+        if (packet is UnknownPacket) {
+            return true
+        }
+        val codec = client?.codec ?: server.codec
+        return runCatching {
+            codec.getPacketDefinition(packet.javaClass as Class<BedrockPacket>) != null
+        }.getOrDefault(true)
+    }
+
+    private fun dropUnsupported(packet: BedrockPacket) {
+        println("Dropping unsupported packet ${packet.javaClass.simpleName}: not present in the negotiated codec")
+        WTrace.warn(
+            "relay",
+            "dropped ${packet.javaClass.simpleName}: the negotiated codec (protocol " +
+                "${client?.codec?.protocolVersion ?: server.codec.protocolVersion}) has no id for it"
+        )
+    }
+
+    fun clientBound(packet: BedrockPacket) {
+        try {
+            server.sendPacket(packet)
+        } catch (e: Exception) {
+            println("Failed to send packet to client: ${e.message}")
+            WTrace.error("relay", "failed to send ${packet.javaClass.simpleName} to the game client: ${e.message}")
+        }
+    }
+
+    fun clientBoundImmediately(packet: BedrockPacket) {
+        try {
+            server.sendPacketImmediately(packet)
+        } catch (e: Exception) {
+            println("Failed to send packet immediately to client: ${e.message}")
+            WTrace.error("relay", "failed to send ${packet.javaClass.simpleName} to the game client immediately: ${e.message}")
+        }
+    }
+
+    fun serverBound(packet: BedrockPacket) {
+        if (!isEncodable(packet)) {
+            dropUnsupported(packet)
+            return
+        }
+        if (client != null) {
+            try {
+                client!!.sendPacket(packet)
+            } catch (e: Exception) {
+                println("Failed to send packet to server: ${e.message}")
+                WTrace.error("relay", "failed to send ${packet.javaClass.simpleName} upstream: ${e.message}")
+            }
+        } else {
+            if (packetQueue.size < maxQueueSize) {
+                packetQueue.add(packet to false)
+                // Packets queued before the upstream session exists are the join handshake: if this
+                // number grows while the console shows nothing else, the upstream connect is the stall.
+                WTrace.debug("relay", "queued ${packet.javaClass.simpleName} until the upstream link is up (queue=${packetQueue.size})")
+            } else {
+                println("Packet queue full, dropping packet")
+                WTrace.error("relay", "packet queue full ($maxQueueSize), dropping ${packet.javaClass.simpleName}")
+            }
+        }
+    }
+
+    fun serverBoundImmediately(packet: BedrockPacket) {
+        if (!isEncodable(packet)) {
+            dropUnsupported(packet)
+            return
+        }
+        if (client != null) {
+            try {
+                client!!.sendPacketImmediately(packet)
+            } catch (e: Exception) {
+                println("Failed to send packet immediately to server: ${e.message}")
+            }
+        } else {
+            if (packetQueue.size < maxQueueSize) {
+                packetQueue.add(packet to true)
+            } else {
+                println("Packet queue full, dropping packet")
+            }
+        }
+    }
+
+    inner class ServerSession(peer: BedrockPeer, subClientId: Int) :
+        BedrockServerSession(peer, subClientId) {
+
+        init {
+            packetHandler = object : BedrockPacketHandler {
+                override fun onDisconnect(reason: CharSequence) {
+                    println("Client disconnect: $reason")
+                    WTrace.warn("relay", "the game client disconnected from the relay: $reason")
+                    runCatching {
+                        client?.disconnect()
+                    }
+                    listeners.forEach {
+                        runCatching {
+                            it.onDisconnect(reason.toString())
+                        }
+                    }
+                    wRelay.connectionManager?.cleanup()
+                }
+            }
+        }
+
+        override fun onPacket(wrapper: BedrockPacketWrapper) {
+            try {
+                listeners.forEach { listener ->
+                    try {
+                        if (listener.beforeClientBound(wrapper.packet)) {
+                            return
+                        }
+                    } catch (e: Throwable) {
+                        println("Before client bound error: ${e.message}")
+                        e.printStackTrace()
+                    }
+                }
+
+                // This packet passed every intercepting listener, so it is what actually crosses the
+                // relay: hand the raw wrapper to the trace listeners (exact size, packet id).
+                listeners.forEach { listener ->
+                    runCatching { listener.onPacketForwarded(wrapper, true) }
+                }
+
+                val buffer = wrapper.packetBuffer
+                    .retainedSlice()
+                    .skipBytes(wrapper.headerLength)
+
+                val unknownPacket = UnknownPacket()
+                unknownPacket.payload = buffer
+                unknownPacket.packetId = wrapper.packetId
+                serverBound(unknownPacket)
+
+                listeners.forEach { listener ->
+                    try {
+                        listener.afterClientBound(wrapper.packet)
+                    } catch (e: Throwable) {
+                        println("After client bound error: ${e.message}")
+                        e.printStackTrace()
+                    }
+                }
+            } catch (e: Exception) {
+                println("Error processing client packet: ${e.message}")
+                e.printStackTrace()
+            }
+        }
+
+    }
+
+    inner class ClientSession(peer: BedrockPeer, subClientId: Int) :
+        BedrockClientSession(peer, subClientId) {
+
+        init {
+            packetHandler = object : BedrockPacketHandler {
+
+                override fun onDisconnect(reason: CharSequence) {
+                    println("Server disconnect: $reason")
+                    WTrace.error("relay", "the upstream server closed the link: $reason")
+                    runCatching {
+                        server.disconnect(reason.toString())
+                    }
+                    listeners.forEach {
+                        runCatching {
+                            it.onDisconnect(reason.toString())
+                        }
+                    }
+                    wRelay.connectionManager?.cleanup()
+                }
+
+            }
+        }
+
+        override fun onPacket(wrapper: BedrockPacketWrapper) {
+            try {
+                listeners.forEach { listener ->
+                    try {
+                        if (listener.beforeServerBound(wrapper.packet)) {
+                            return
+                        }
+                    } catch (e: Throwable) {
+                        println("Before server bound error: ${e.message}")
+                        e.printStackTrace()
+                    }
+                }
+
+                // Server -> game client, i.e. the traffic the player sees.
+                listeners.forEach { listener ->
+                    runCatching { listener.onPacketForwarded(wrapper, false) }
+                }
+
+                val buffer = wrapper.packetBuffer
+                    .retainedSlice()
+                    .skipBytes(wrapper.headerLength)
+
+                val unknownPacket = UnknownPacket()
+                unknownPacket.payload = buffer
+                unknownPacket.packetId = wrapper.packetId
+                clientBound(unknownPacket)
+
+                listeners.forEach { listener ->
+                    try {
+                        listener.afterServerBound(wrapper.packet)
+                    } catch (e: Throwable) {
+                        println("After server bound error: ${e.message}")
+                        e.printStackTrace()
+                    }
+                }
+            } catch (e: Exception) {
+                println("Error processing server packet: ${e.message}")
+                e.printStackTrace()
+            }
+        }
+
+    }
+
+}

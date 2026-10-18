@@ -7,7 +7,7 @@
 > mechanism the `.command` replies use — the server never sees it).
 
 Every class/enum referenced below exists in the protocol library vendored in
-`relay/Protocol` (verified), so this is implementable with what WClient already ships.
+`relay/Protocol` (verified), so this is implementable with what Neon already ships.
 
 ---
 

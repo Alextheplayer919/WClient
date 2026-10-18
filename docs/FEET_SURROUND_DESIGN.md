@@ -7,7 +7,7 @@
 > Unit tests: `app/src/test/.../game/world/` (parser layout, DDA walk, classification).
 
 Two things went in together, because the surround module was written against world
-knowledge WClient never had: a **minimal voxel store** fed from the packet stream, and the
+knowledge Neon never had: a **minimal voxel store** fed from the packet stream, and the
 **feet-surround module** on top of it. The same store now powers `CrystalSmashModule`'s
 `require_los` sight check (crystals behind terrain are skipped) — see the appendix.
 
@@ -180,7 +180,7 @@ Config: `place_interval_ms` (20..200), `silent_rot` (bool), `require_los` (bool)
   has no such action type; the `ITEM_USE` transaction is the supported path (it's what
   the v712+ serializers in `relay/Protocol` encode).
 - **Pre-1.20 chunk layouts** (palettes, 8/16-bit states): not parsed — those servers
-  predate everything WClient's combat suite targets.
+  predate everything Neon's combat suite targets.
 - **Full physics flags** (per-state solid/opaque tables): would need the block-state
   JSON dumps, same data gap as the 801+ assets. Name-based classification is a
   deliberate, testable approximation.

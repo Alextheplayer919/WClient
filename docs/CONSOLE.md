@@ -1,4 +1,4 @@
-# WClient console — what it captures and how to read it
+# Neon console — what it captures and how to read it
 
 The console exists to make a failed join or a freeze explainable from the app itself, without adb, a
 second device or a packet capture. It starts **before** the relay can be started: the app opens on the
@@ -18,8 +18,8 @@ boot console, and everything after that point is recorded.
 so a report can be read from that line: everything above it is the boot state, everything below belongs
 to that capture.
 
-Reports are written to `WClient/console/` on shared storage (falling back to the app-specific folder
-when that is not writable) as `wclient-console_<date>_<time>.txt`.
+Reports are written to `Neon/console/` on shared storage (falling back to the app-specific folder
+when that is not writable) as `neon-console_<date>_<time>.txt`.
 
 ## What is recorded
 
@@ -90,3 +90,26 @@ first thing to look at for any version-specific problem (for example anything ab
   captures.
 - The trace settings panel (magnifier icon in the console) controls packet/network/datagram/code
   tracing, the minimum level and the buffer size; they apply immediately and are persisted.
+
+## Optional recording
+
+Console capture is now **off by default**. Use **Record / Stop** on the Home console
+panel, or **Start recording / Stop recording** on the Console page. The preference
+is saved across launches. It is independent of starting/stopping the relay.
+
+When off, console log capture and packet counters stop, boot-console display is
+suppressed, and neither a console overlay button nor a console window is created
+over the game. Stopping capture removes both immediately if already shown. Other
+client overlays (module controls, ESP, etc.) are unaffected. Existing in-memory
+logs remain exportable until cleared or the app process ends. Normal Android
+logcat output and crash handling are unaffected.
+
+When recording is enabled, the separate "floating console button" preference
+controls the in-game launcher. The window opens only on an explicit tap. Repeated
+taps now use one managed window rather than creating duplicate/untracked windows.
+Each recording start resets packet counters for the new capture period while
+preserving previous buffered log lines. **Freeze display** only freezes the view;
+it is not the recording toggle.
+
+The watchdog ignores disabled periods and waits for the no-traffic grace period
+instead of reporting enormous stalled durations before any packet has arrived.

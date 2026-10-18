@@ -9,16 +9,16 @@ plugins {
 }
 
 android {
-    namespace = "com.retrivedmods.wclient"
+    namespace = "com.retrivedmods.neon"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.retrivedmods.wclient"
+        applicationId = "com.retrivedmods.neon"
         minSdk = 28
         //noinspection OldTargetApi,EditedTargetSdkVersion
         targetSdk = 35
-        versionCode = 1
-        versionName = "18.0"
+        versionCode = 2
+        versionName = "19.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
