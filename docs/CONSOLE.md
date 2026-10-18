@@ -90,3 +90,26 @@ first thing to look at for any version-specific problem (for example anything ab
   captures.
 - The trace settings panel (magnifier icon in the console) controls packet/network/datagram/code
   tracing, the minimum level and the buffer size; they apply immediately and are persisted.
+
+## Optional recording
+
+Console capture is now **off by default**. Use **Record / Stop** on the Home console
+panel, or **Start recording / Stop recording** on the Console page. The preference
+is saved across launches. It is independent of starting/stopping the relay.
+
+When off, console log capture and packet counters stop, boot-console display is
+suppressed, and neither a console overlay button nor a console window is created
+over the game. Stopping capture removes both immediately if already shown. Other
+client overlays (module controls, ESP, etc.) are unaffected. Existing in-memory
+logs remain exportable until cleared or the app process ends. Normal Android
+logcat output and crash handling are unaffected.
+
+When recording is enabled, the separate "floating console button" preference
+controls the in-game launcher. The window opens only on an explicit tap. Repeated
+taps now use one managed window rather than creating duplicate/untracked windows.
+Each recording start resets packet counters for the new capture period while
+preserving previous buffered log lines. **Freeze display** only freezes the view;
+it is not the recording toggle.
+
+The watchdog ignores disabled periods and waits for the no-traffic grace period
+instead of reporting enormous stalled durations before any packet has arrived.

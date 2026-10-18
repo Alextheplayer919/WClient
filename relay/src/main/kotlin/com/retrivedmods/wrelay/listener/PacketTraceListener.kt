@@ -33,6 +33,7 @@ import org.cloudburstmc.protocol.bedrock.packet.UnknownPacket
 class PacketTraceListener : WRelayPacketListener {
 
     override fun onPacketForwarded(wrapper: BedrockPacketWrapper, clientToServer: Boolean) {
+        if (!WTrace.enabled) return
         val packet = wrapper.packet
         val name = packetName(packet)
         val size = wireSize(wrapper)

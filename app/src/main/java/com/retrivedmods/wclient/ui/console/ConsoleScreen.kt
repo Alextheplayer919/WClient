@@ -118,7 +118,7 @@ fun ConsoleScreen(
     var expandedId by remember { mutableStateOf<Long?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var savedPath by remember { mutableStateOf<String?>(null) }
-    var settings by remember { mutableStateOf(ConsoleRuntime.settings) }
+    val settings by ConsoleRuntime.settingsFlow.collectAsState()
 
     var secondsLeft by remember { mutableStateOf(autoContinueSeconds) }
 
@@ -220,7 +220,7 @@ fun ConsoleScreen(
                     }) {
                         Icon(
                             if (paused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
-                            contentDescription = if (paused) "Resume" else "Pause"
+                            contentDescription = if (paused) "Resume display (recording unchanged)" else "Freeze display (recording unchanged)"
                         )
                     }
                     IconButton(onClick = {
@@ -259,13 +259,23 @@ fun ConsoleScreen(
                 .padding(padding)
                 .fillMaxSize()
         ) {
+            Row(
+                Modifier.fillMaxWidth().background(ConsoleColors.Panel).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(if (settings.recording) "Recording ON" else "Recording OFF — no console overlay", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                TextButton(onClick = { ConsoleRuntime.setRecording(context, !settings.recording) }) {
+                    Text(if (settings.recording) "Stop recording" else "Start recording")
+                }
+            }
             if (startup) {
                 StartupBanner(
                     secondsLeft = secondsLeft,
                     autoContinue = settings.autoContinueOnBoot && settings.bootHoldSeconds > 0,
                     onToggleAutoContinue = { enabled ->
                         val updated = settings.copy(autoContinueOnBoot = enabled)
-                        settings = updated
                         ConsoleRuntime.updateSettings(context, updated)
                     },
                     onContinue = { onExit?.invoke() }
@@ -318,7 +328,6 @@ fun ConsoleScreen(
                 TraceSettingsPanel(
                     settings = settings,
                     onChange = { updated ->
-                        settings = updated
                         ConsoleRuntime.updateSettings(context, updated)
                     }
                 )
@@ -695,6 +704,7 @@ private fun TraceSettingsPanel(settings: ConsoleSettings, onChange: (ConsoleSett
     ) {
         Text("trace depth", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
+        SettingToggle("record console (enables capture and console overlays)", settings.recording) { onChange(settings.copy(recording = it)) }
         SettingToggle("console on boot", settings.showOnBoot) { onChange(settings.copy(showOnBoot = it)) }
         SettingToggle("every Bedrock packet (rate limited per type)", settings.packetTrace) { onChange(settings.copy(packetTrace = it)) }
         SettingToggle("RakNet events: handshake, MTU, splits, acks, resends", settings.netTrace) { onChange(settings.copy(netTrace = it)) }

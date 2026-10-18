@@ -22,8 +22,8 @@ class AppContext : Application(), Thread.UncaughtExceptionHandler {
         super.onCreate()
         instance = this
 
-        // Console first: it captures stdout/stderr and the vendored transport hooks, so everything from
-        // this point on (including a failure during startup) is on the record.
+        // Load the optional recording preference before the relay can start.
+        // When disabled, console capture and console overlays stay off.
         runCatching {
             com.retrivedmods.wclient.console.ConsoleRuntime.install(this)
         }

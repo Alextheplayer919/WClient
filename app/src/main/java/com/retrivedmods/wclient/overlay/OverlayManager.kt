@@ -58,6 +58,7 @@ object OverlayManager {
         currentClickGUI = null
         currentClickGUIOverlay = null
         consoleOverlayButton = null
+        consoleOverlayWindow = null
 
 
         when (theme) {
@@ -77,7 +78,7 @@ object OverlayManager {
 
         // The console button rides along with the relay's overlay: it is how the user watches packets
         // while the game is in the foreground, which is exactly when a freeze happens.
-        if (ConsoleRuntime.settings.overlayButton) {
+        if (ConsoleRuntime.settings.recording && ConsoleRuntime.settings.overlayButton) {
             val button = com.retrivedmods.wclient.overlay.console.ConsoleOverlayButton()
             consoleOverlayButton = button
             overlayWindows.add(button)
@@ -86,6 +87,7 @@ object OverlayManager {
 
     /** Opens or closes the floating console window, e.g. from the console page. */
     fun toggleConsoleOverlay() {
+        if (!isShowing || !ConsoleRuntime.settings.recording) return
         val context = currentContext ?: return
         val open = consoleOverlayWindow
         if (open != null) {
@@ -100,9 +102,25 @@ object OverlayManager {
         showOverlayWindow(context, window)
     }
 
+    /** Called on the main thread after a recording/overlay preference changes. */
+    fun refreshConsoleOverlays() {
+        if (!ConsoleRuntime.settings.recording) {
+            consoleOverlayWindow?.let { dismissOverlayWindow(it) }
+        }
+        val showButton = isShowing && ConsoleRuntime.settings.recording && ConsoleRuntime.settings.overlayButton
+        if (!showButton) {
+            consoleOverlayButton?.let { dismissOverlayWindow(it) }
+        } else if (consoleOverlayButton == null) {
+            val button = com.retrivedmods.wclient.overlay.console.ConsoleOverlayButton()
+            consoleOverlayButton = button
+            showOverlayWindow(button)
+        }
+    }
+
     private var consoleOverlayWindow: OverlayWindow? = null
 
     fun showOverlayWindow(overlayWindow: OverlayWindow) {
+        if (overlayWindows.contains(overlayWindow)) return
         overlayWindows.add(overlayWindow)
 
         val context = currentContext
@@ -113,6 +131,8 @@ object OverlayManager {
 
     fun dismissOverlayWindow(overlayWindow: OverlayWindow) {
         overlayWindows.remove(overlayWindow)
+        if (consoleOverlayWindow === overlayWindow) consoleOverlayWindow = null
+        if (consoleOverlayButton === overlayWindow) consoleOverlayButton = null
 
         val context = currentContext
         if (isShowing && context != null) {
@@ -121,6 +141,7 @@ object OverlayManager {
     }
 
     fun show(context: Context) {
+        if (isShowing) dismiss()
         currentContext = context
 
 

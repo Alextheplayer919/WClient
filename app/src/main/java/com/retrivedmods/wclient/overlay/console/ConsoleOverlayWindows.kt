@@ -41,13 +41,12 @@ class ConsoleOverlayButton : OverlayWindow() {
     override val layoutParams: WindowManager.LayoutParams
         get() = _layoutParams
 
-    private val consoleWindow by lazy { ConsoleOverlayWindow() }
 
     @Composable
     override fun Content() {
         val context = LocalContext.current
         ElevatedCard(
-            onClick = { OverlayManager.showOverlayWindow(consoleWindow) },
+            onClick = { OverlayManager.toggleConsoleOverlay() },
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier
                 .padding(5.dp)

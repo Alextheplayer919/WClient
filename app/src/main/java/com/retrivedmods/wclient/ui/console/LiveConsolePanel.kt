@@ -57,13 +57,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * The console, sitting in the app next to the version/server pickers.
- *
- * It is tappable and always shows what is happening right now: idle before the relay is turned on,
- * `RECORDING` from the moment it is, with the last few lines and the packet counters. That timestamp
- * is the point of the panel - the session marker (`=== relay START ... ===`) is written when the
- * Start button flips, so the log can be read from there.
+/** Optional console capture next to the version/server pickers. Record/Stop is a persistent
+ * master switch, separate from starting the relay or freezing the console display.
  */
 @Composable
 fun LiveConsolePanel(
@@ -77,7 +72,8 @@ fun LiveConsolePanel(
 
     val revision by WTrace.revision.collectAsState()
     val entries = remember(revision, lines) { WTrace.tail(lines) }
-    val active = Services.isActive
+    val recording = ConsoleRuntime.settingsFlow.collectAsState().value.recording
+    val active = recording && Services.isActive
     var expanded by remember { mutableStateOf(false) }
     var savedPath by remember { mutableStateOf<String?>(null) }
 
@@ -110,23 +106,28 @@ fun LiveConsolePanel(
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    if (active) "Console - recording" else "Console - waiting for the relay",
+                    if (!recording) "Console - recording off" else "Console - recording",
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    if (active) {
+                    if (!recording) {
+                        "optional diagnostics disabled — no in-game console"
+                    } else if (active) {
                         Services.linkSnapshot()
                             ?: "relay on: waiting for the game to connect"
                     } else {
-                        "everything is recorded from the moment you press Start"
+                        "recording app diagnostics; waiting for the relay"
                     },
                     color = ConsoleColors.Muted,
                     fontSize = 10.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+            }
+            TextButton(onClick = { ConsoleRuntime.setRecording(context, !recording) }) {
+                Text(if (recording) "Stop" else "Record", fontSize = 11.sp)
             }
             IconButton(onClick = {
                 scope.launch(Dispatchers.IO) {
@@ -149,7 +150,7 @@ fun LiveConsolePanel(
                     return@IconButton
                 }
                 OverlayManager.toggleConsoleOverlay()
-            }) {
+            }, enabled = recording && OverlayManager.isShowing) {
                 Icon(
                     Icons.Rounded.PictureInPicture,
                     contentDescription = "Float the console over the game",

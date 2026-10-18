@@ -17,6 +17,14 @@ object WTraceStreams {
     @Volatile
     private var installed = false
 
+    private var outTee: TeeStream? = null
+    private var errTee: TeeStream? = null
+
+    fun discardPending() {
+        outTee?.discard()
+        errTee?.discard()
+    }
+
     fun install() {
         if (installed) {
             return
@@ -25,8 +33,10 @@ object WTraceStreams {
         runCatching {
             val stdout = System.out
             val stderr = System.err
-            System.setOut(PrintStream(TeeStream(stdout, "out", WLevel.INFO), true))
-            System.setErr(PrintStream(TeeStream(stderr, "err", WLevel.WARN), true))
+            outTee = TeeStream(stdout, "out", WLevel.INFO)
+            errTee = TeeStream(stderr, "err", WLevel.WARN)
+            System.setOut(PrintStream(outTee, true))
+            System.setErr(PrintStream(errTee, true))
             WTrace.debug("console", "stdout/stderr tee installed", WKind.CODE)
         }.onFailure {
             installed = false
@@ -43,13 +53,15 @@ object WTraceStreams {
 
         override fun write(b: Int) {
             safe { original.write(b) }
-            feed(b.toChar().toString())
+            if (WTrace.enabled && WTrace.codeTrace) feed(b.toChar().toString()) else discard()
         }
 
         override fun write(b: ByteArray, off: Int, len: Int) {
             safe { original.write(b, off, len) }
-            feed(String(b, off, len, Charsets.UTF_8))
+            if (WTrace.enabled && WTrace.codeTrace) feed(String(b, off, len, Charsets.UTF_8)) else discard()
         }
+
+        fun discard() { synchronized(line) { line.setLength(0) } }
 
         override fun flush() {
             safe { original.flush() }

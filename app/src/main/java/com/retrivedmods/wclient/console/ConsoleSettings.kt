@@ -10,12 +10,13 @@ import com.retrivedmods.wtrace.WTrace
  * every change (the trace hooks read the flags live, so no restart is needed).
  */
 data class ConsoleSettings(
+    /** Opt-in master switch for capture and console overlays, persisted across launches. */
+    val recording: Boolean = false,
     /**
      * Show the console as a full screen before the main UI when the app starts.
      *
-     * Off by default: the console already lives in the app (Home page panel, sidebar page, floating
-     * window over the game) and records from before the relay is switched on, so the boot screen is
-     * only for the moments the app does not even start.
+     * Off by default and ignored while recording is disabled. This is separate from the
+     * optional floating console over the game.
      */
     val showOnBoot: Boolean = false,
     /** Leave the boot console automatically once it has finished, so a normal launch still feels normal. */
@@ -39,13 +40,15 @@ data class ConsoleSettings(
 ) {
 
     fun applyToTrace() {
+        // Disable first, so changing subordinate flags cannot record during a stop.
+        if (!recording) WTrace.enabled = false
         WTrace.packetTrace = packetTrace
         WTrace.netTrace = netTrace
         WTrace.datagramTrace = datagramTrace
         WTrace.codeTrace = codeTrace
         WTrace.minLevel = minLevel
         WTrace.capacity = capacity.coerceIn(500, 200_000)
-        WTrace.enabled = true
+        WTrace.enabled = recording
     }
 
     companion object {
@@ -55,6 +58,7 @@ data class ConsoleSettings(
         fun load(context: Context): ConsoleSettings {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             return ConsoleSettings(
+                recording = prefs.getBoolean("recording", false),
                 showOnBoot = prefs.getBoolean("show_on_boot", false),
                 autoContinueOnBoot = prefs.getBoolean("auto_continue", true),
                 bootHoldSeconds = prefs.getInt("boot_hold_seconds", 6),
@@ -73,6 +77,7 @@ data class ConsoleSettings(
 
         fun save(context: Context, settings: ConsoleSettings) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
+                putBoolean("recording", settings.recording)
                 putBoolean("show_on_boot", settings.showOnBoot)
                 putBoolean("auto_continue", settings.autoContinueOnBoot)
                 putInt("boot_hold_seconds", settings.bootHoldSeconds)

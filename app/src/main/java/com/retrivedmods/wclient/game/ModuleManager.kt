@@ -4,11 +4,8 @@ import android.content.Context
 import android.net.Uri
 import com.retrivedmods.wclient.application.AppContext
 import com.retrivedmods.wclient.game.module.combat.ACAModule
-import com.retrivedmods.wclient.game.module.combat.AntiCrystalModule
 import com.retrivedmods.wclient.game.module.combat.AntiKnockbackModule
-import com.retrivedmods.wclient.game.module.combat.CrystalSmashModule
 import com.retrivedmods.wclient.game.module.combat.EnemyHunterModule
-import com.retrivedmods.wclient.game.module.combat.FeetSurroundModule
 import com.retrivedmods.wclient.game.module.combat.HitAndRunModule
 import com.retrivedmods.wclient.game.module.combat.HitboxModule
 import com.retrivedmods.wclient.game.module.combat.KillauraModule
@@ -106,12 +103,9 @@ object ModuleManager {
             add(EnemyHunterModule())
             add(AntiKnockbackModule())
 
-            add(AntiCrystalModule())
             add(HitAndRunModule())
             add(HitboxModule())
-            add(CrystalSmashModule())
             add(TriggerBotModule())
-            add(FeetSurroundModule())
 
             // Motion
             add(MotionFlyModule())

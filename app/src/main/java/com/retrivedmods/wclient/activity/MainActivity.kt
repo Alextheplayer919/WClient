@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
                 // Boot order: console first (it captures everything from before the relay can be
                 // started), then the existing loading screen, then the app itself.
                 var stage by remember {
-                    mutableStateOf(if (ConsoleRuntime.settings.showOnBoot) BootStage.Console else BootStage.Loading)
+                    mutableStateOf(if (ConsoleRuntime.settings.recording && ConsoleRuntime.settings.showOnBoot) BootStage.Console else BootStage.Loading)
                 }
 
                 when (stage) {

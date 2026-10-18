@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.NetworkCapabilities
+import android.os.Handler
+import android.os.Looper
 import android.os.Build
 import com.retrivedmods.wclient.BuildConfig
 import com.retrivedmods.wclient.application.AppContext
@@ -15,24 +17,18 @@ import com.retrivedmods.wtrace.WTraceDiagnostics
 import com.retrivedmods.wtrace.WTraceHooks
 import com.retrivedmods.wtrace.WTraceReport
 import com.retrivedmods.wtrace.WTraceStreams
+import com.retrivedmods.wclient.overlay.OverlayManager
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.concurrent.thread
 
-/**
- * Boots the console and keeps it fed.
- *
- * Three things happen here, all of them before the relay starts:
- *  1. the trace hooks are installed (stdout/stderr tee + the RakNet/Bedrock hooks of the vendored
- *     modules), so nothing the relay does from now on can happen off the record;
- *  2. the device, the network links and the target server are probed and written to the console - the
- *     "no internet" feeling of a broken relay is usually a phone that is on a VPN, a link with a tiny
- *     MTU or a server that does not resolve;
- *  3. a watchdog watches the packet counters while the relay is running and reports the exact kind of
- *     stall ("the game is still sending, the server stopped answering") instead of leaving the player
- *     to guess.
+/** Optional diagnostics runtime. Preferences are loaded before capture hooks are enabled.
+ * Capture starts only with recording on; the watchdog idles while off. Settings are observable
+ * so the Home panel and Console page always share the same recording state.
  */
 object ConsoleRuntime {
 
@@ -45,8 +41,11 @@ object ConsoleRuntime {
 
     private var watchdog: Thread? = null
 
-    @Volatile
-    var settings: ConsoleSettings = ConsoleSettings()
+    private val _settings = MutableStateFlow(ConsoleSettings())
+    val settingsFlow = _settings.asStateFlow()
+    var settings: ConsoleSettings
+        get() = _settings.value
+        private set(value) { _settings.value = value }
 
     fun install(context: Context): ConsoleSettings {
         if (installed) {
@@ -54,34 +53,43 @@ object ConsoleRuntime {
         }
         installed = true
 
-        // Streams first: everything from here on - including a failure below - is on the record.
-        WTraceStreams.install()
-        WTraceHooks.install()
-
+        // Load the master switch before installing any capture hooks.
         settings = ConsoleSettings.load(context).also { it.applyToTrace() }
-
-        logBootBanner(context)
-        logPlatform(context)
-        logAndroidNetwork(context)
-
-        startWatchdog()
-
-        thread(name = "WConsoleDiagnostics", isDaemon = true) {
-            logBootDiagnostics(context)
-        }
-
+        WTraceHooks.install()
+        if (settings.recording) startRecording(context.applicationContext)
         return settings
     }
 
     fun updateSettings(context: Context, newSettings: ConsoleSettings) {
-        settings = newSettings
-        ConsoleSettings.save(context, newSettings)
+        val wasRecording = settings.recording
+        val updated = if (newSettings.recording) newSettings else newSettings.copy(overlayOpen = false)
+        settings = updated
+        ConsoleSettings.save(context, updated)
+        if (!updated.recording) WTraceStreams.discardPending()
+        if (!wasRecording && updated.recording) startRecording(context.applicationContext)
+        Handler(Looper.getMainLooper()).post { OverlayManager.refreshConsoleOverlays() }
         WTrace.info(
             "console",
             "trace settings: packets=${newSettings.packetTrace} net=${newSettings.netTrace} " +
                 "datagrams=${newSettings.datagramTrace} code=${newSettings.codeTrace} " +
                 "minLevel=${newSettings.minLevel} buffer=${newSettings.capacity}"
         )
+    }
+
+    fun setRecording(context: Context, recording: Boolean) {
+        updateSettings(context, settings.copy(recording = recording))
+    }
+
+    private fun startRecording(context: Context) {
+        WTrace.stats.clear() // Fresh capture counters; keep previous log lines available to export.
+        WTraceStreams.install()
+        logBootBanner(context)
+        logPlatform(context)
+        logAndroidNetwork(context)
+        startWatchdog()
+        thread(name = "WConsoleDiagnostics", isDaemon = true) {
+            if (settings.recording) logBootDiagnostics(context)
+        }
     }
 
     // ---------------------------------------------------------------- boot info
@@ -223,7 +231,7 @@ object ConsoleRuntime {
             while (true) {
                 try {
                     Thread.sleep(1_000)
-                    if (!Services.isActive) {
+                    if (!settings.recording || !Services.isActive) {
                         stallReported = false
                         sessionSince = 0L
                         continue
@@ -236,13 +244,13 @@ object ConsoleRuntime {
 
                     val lastToClient = WTrace.stats.lastToClientMs()
                     val lastToServer = WTrace.stats.lastToServerMs()
-                    val downAge = if (lastToClient > 0L) now - lastToClient else Long.MAX_VALUE
-                    val upAge = if (lastToServer > 0L) now - lastToServer else Long.MAX_VALUE
+                    val downAge = now - maxOf(lastToClient, sessionSince)
+                    val upAge = now - maxOf(lastToServer, sessionSince)
 
                     when {
                         // Nothing at all for a long time while a session exists.
-                        lastToClient == 0L && lastToServer == 0L && now - sessionSince > NO_TRAFFIC_ALERT_MS -> {
-                            if (!stallReported) {
+                        lastToClient == 0L && lastToServer == 0L -> {
+                            if (!stallReported && now - sessionSince > NO_TRAFFIC_ALERT_MS) {
                                 stallReported = true
                                 WTrace.error(
                                     "watchdog",
@@ -257,7 +265,7 @@ object ConsoleRuntime {
                                 WTrace.error(
                                     "watchdog",
                                     "LINK STALLED: no packets in either direction for " +
-                                        "${downAge / 1000}s (up) / ${upAge / 1000}s (down). " +
+                                        "${upAge / 1000}s (up) / ${downAge / 1000}s (down). " +
                                         "${Services.linkSnapshot() ?: ""} ${upstreamPingText()}"
                                 )
                             }

@@ -258,6 +258,7 @@ object WTrace {
         chatty: Boolean = false,
         level: WLevel = WLevel.DEBUG
     ) {
+        if (!enabled) return
         val key = "$direction|$name"
         stats.record(direction, name, sizeBytes)
         if (!enabled || !packetTrace || !accepts(level)) {

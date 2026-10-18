@@ -8,6 +8,8 @@ import androidx.compose.material.icons.rounded.PictureInPicture
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import com.retrivedmods.wclient.console.ConsoleRuntime
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.retrivedmods.wclient.overlay.OverlayManager
@@ -22,6 +24,7 @@ import com.retrivedmods.wclient.ui.console.ConsoleScreen
 @Composable
 fun ConsolePageContent() {
     val context = LocalContext.current
+    val recording = ConsoleRuntime.settingsFlow.collectAsState().value.recording
 
     ConsoleScreen(
         modifier = Modifier.fillMaxSize(),
@@ -36,7 +39,7 @@ fun ConsolePageContent() {
                     return@IconButton
                 }
                 OverlayManager.toggleConsoleOverlay()
-            }) {
+            }, enabled = recording) {
                 Icon(Icons.Rounded.PictureInPicture, contentDescription = "Float over the game")
             }
         }
