@@ -142,3 +142,8 @@ class StringValue(name: String, defaultValue: String) : Value<String>(name, defa
 interface ListItem {
     val name: String
 }
+
+/** Optional human-readable label for values whose persisted enum name should stay stable. */
+interface DisplayNamed {
+    val displayName: String
+}

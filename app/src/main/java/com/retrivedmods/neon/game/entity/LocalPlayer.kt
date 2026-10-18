@@ -49,14 +49,13 @@ class LocalPlayer(val session: GameSession) : Player(0L, 0L, UUID.randomUUID(), 
         private set
 
     /**
-     * Rotation (pitch, yaw, headYaw) that should be sent to the server with the next
-     * PlayerAuthInputPacket instead of the real camera rotation. Set by combat modules,
-     * consumed and cleared by GameSession. The client's camera is never changed.
+     * Legacy rotation request (pitch, yaw, headYaw) consumed by GameSession for modules that still
+     * use the silent path. D4C Aura edits its PlayerAuthInputPacket directly instead.
      */
     @Volatile
     var silentRotation: Vector3f? = null
 
-    /** Last rotation the server actually received from us (silent or real). */
+    /** Last rotation the relay forwarded upstream (raw input, direct packet edit, or legacy override). */
     var serverRotation: Vector3f = Vector3f.ZERO
         private set
 

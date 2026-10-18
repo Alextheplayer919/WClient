@@ -25,7 +25,7 @@ sketch's helper classes map onto infrastructure that already exists:
 | Sketch class | This client |
 |---|---|
 | `PositionTracker` (fed from `PlayerAuthInputPacket`) | `session.localPlayer` — updated from exactly that packet in `LocalPlayer.onPacketBound` |
-| `SilentRotation.aimAt` / `applyTo` | `RotationUtils.aimSilently` → `LocalPlayer.silentRotation` → swapped into the outgoing auth input by `GameSession.applySilentRotation` |
+| `SilentRotation.aimAt` / `applyTo` | `RotationUtils.aimSilently` → `LocalPlayer.silentRotation` → applied and re-encoded by `GameSession.forwardModifiedInputRotation` |
 | `session.level.getBlockAt` | `session.world.getBlockAt` (`Level` stays the entity registry) |
 
 Design rules:
@@ -122,11 +122,11 @@ Every `PlayerAuthInputPacket`, as often as `place_interval_ms` allows (default 6
    convention: `look = (-sin yaw, 0, cos yaw)`, matching `RotationUtils.toRotation`),
    so the placement the server sees is the most natural one.
 3. **Silent aim** — `RotationUtils.aimSilently(player, clickPoint, eyeHeight = 1.62)`
-   (new `eyeHeight` parameter; combat keeps aiming from the feet). The rotation is the
-   existing silent mechanism: it lands in `LocalPlayer.silentRotation` and
-   `GameSession.applySilentRotation` swaps it into the outgoing auth input. Camera
-   untouched. (On this protocol the server does not re-derive placements from the
-   reported rotation — the aim is for plausibility, not correctness.)
+   (new `eyeHeight` parameter; combat keeps aiming from the feet). The rotation uses the
+   legacy request in `LocalPlayer.silentRotation`; `GameSession.forwardModifiedInputRotation`
+   applies it and re-encodes the outgoing auth input. Camera untouched. (On this protocol the
+   server does not re-derive placements from the reported rotation — the aim is for plausibility,
+   not correctness.)
 4. **Placement transaction** — the vendored codec speaks the legacy `ITEM_USE`
    transaction for block placement (there is no `BLOCK_PLACE` type and no
    `BlockPlaceAction` in this fork; `ItemUseTransaction` fields exist since v712):

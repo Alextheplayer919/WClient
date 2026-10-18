@@ -32,14 +32,13 @@ fun getAngleDifference(a: Float, b: Float) = ((a - b) % 360f + 540f) % 360f - 18
 /**
  * Shared rotation system for combat modules.
  *
- * Design rules:
- *  - Rotations are silent. Modules never send anything to the client; they only request a
- *    rotation via [LocalPlayer.silentRotation], and GameSession swaps it into the outgoing
- *    PlayerAuthInputPacket. The player's camera is untouched.
- *  - Aiming is instant. A combat module never has its own rotation speed.
- *  - Orbiting (strafing) has no speed of its own either. The travel each tick is the distance the
- *    player actually covered on their own - i.e. whatever the fly/motion modules are doing - and
- *    the orbit only bends that travel around the target. Standing still means no orbit.
+ * These shared helpers still support legacy modules that request rotations through
+ * [LocalPlayer.silentRotation]. D4C Aura instead edits its outgoing PlayerAuthInputPacket directly;
+ * GameSession re-encodes changed packet rotations. Visible-camera synchronization is a separate,
+ * explicit option in D4C Aura's predictive mode.
+ *
+ * Orbiting (strafing) has no speed of its own: each tick it bends the player's actual travel around
+ * the target. Standing still means no orbit.
  */
 object RotationUtils {
 

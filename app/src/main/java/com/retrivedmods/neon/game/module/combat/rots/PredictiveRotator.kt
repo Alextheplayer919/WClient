@@ -3,11 +3,15 @@ package com.retrivedmods.neon.game.module.combat.rots
 import com.retrivedmods.neon.game.GameSession
 import com.retrivedmods.neon.game.entity.Entity
 import com.retrivedmods.neon.game.entity.Player
+import org.cloudburstmc.math.vector.Vector3f
+import org.cloudburstmc.protocol.bedrock.data.PlayerAuthInputData
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityDataTypes
+import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
+import kotlin.math.abs
 
-/** Tick-based prediction and target locking. Output is consumed via LocalPlayer.silentRotation.
- * Never sends client-bound packets or changes the camera/position.
+/** Tick-based prediction and target locking. The caller writes [pitch]/[yaw] into its input packet.
+ * Optional Camera Sync sends a guarded client-bound rotation packet; it does not alter aim math.
  */
 class PredictiveRotator {
 
@@ -17,12 +21,15 @@ class PredictiveRotator {
         val smoothing: Float,
         val maxSpeed: Float,
         val accel: Float,
+        val cameraSync: Boolean,
         val vertOffset: Float
     )
 
     private val aim = PredictiveAim()
     private var lockedId = -1L
     private var lockedSinceTick = 0L
+    private var lastSyncYaw = Float.NaN
+    private var lastSyncPitch = Float.NaN
 
     var pitch = 0f
         private set
@@ -36,6 +43,8 @@ class PredictiveRotator {
         aim.reset()
         lockedId = -1L
         lockedSinceTick = 0L
+        lastSyncYaw = Float.NaN
+        lastSyncPitch = Float.NaN
         pitch = 0f
         yaw = 0f
     }
@@ -67,8 +76,15 @@ class PredictiveRotator {
         if (targets.isEmpty()) {
             lockedId = -1L
             if (!aim.isOverriding) return false
-            aim.release(packet.rotation.y, packet.rotation.x, tick)
+            if (s.cameraSync) {
+                // Keep the camera where the last synced rotation left it while releasing.
+                aim.release(aim.yaw, aim.pitch, tick)
+            } else {
+                // Without camera sync, ease back toward the real input rotation.
+                aim.release(packet.rotation.y, packet.rotation.x, tick)
+            }
             publish()
+            syncCamera(session, packet, s)
             // Publish the final release step too, then stop overriding on the next tick.
             return true
         }
@@ -88,12 +104,41 @@ class PredictiveRotator {
             tick
         )
         publish()
+        syncCamera(session, packet, s)
         return true
     }
 
     private fun publish() {
         pitch = aim.pitch
         yaw = aim.yaw
+    }
+
+    /** Synchronize the visible client rotation when the imported Camera Sync option is enabled. */
+    private fun syncCamera(session: GameSession, packet: PlayerAuthInputPacket, s: Settings) {
+        if (!s.cameraSync) return
+        if (!lastSyncYaw.isNaN()) {
+            var dYaw = yaw - lastSyncYaw
+            while (dYaw > 180f) dYaw -= 360f
+            while (dYaw < -180f) dYaw += 360f
+            if (abs(dYaw) < SYNC_EPS && abs(pitch - lastSyncPitch) < SYNC_EPS) return
+        }
+        lastSyncYaw = yaw
+        lastSyncPitch = pitch
+
+        val localPlayer = session.localPlayer
+        session.clientBound(MovePlayerPacket().apply {
+            runtimeEntityId = localPlayer.runtimeEntityId
+            position = Vector3f.from(
+                packet.position.x + localPlayer.motionX.coerceIn(-MAX_SYNC_STEP, MAX_SYNC_STEP),
+                packet.position.y,
+                packet.position.z + localPlayer.motionZ.coerceIn(-MAX_SYNC_STEP, MAX_SYNC_STEP)
+            )
+            rotation = Vector3f.from(pitch, yaw, yaw)
+            mode = MovePlayerPacket.Mode.NORMAL
+            onGround = packet.inputData.contains(PlayerAuthInputData.VERTICAL_COLLISION) && localPlayer.motionY <= 0f
+            ridingRuntimeEntityId = 0
+            tick = packet.tick
+        })
     }
 
     /**
@@ -135,6 +180,8 @@ class PredictiveRotator {
     }
 
     private companion object {
+        const val SYNC_EPS = 0.01f
+        const val MAX_SYNC_STEP = 0.6f
 
         // Cambio de objetivo: solo si el nuevo esta >25% mas cerca y al menos 0.75 bloques mas
         // cerca, y el actual lleva al menos 6 ticks bloqueado.

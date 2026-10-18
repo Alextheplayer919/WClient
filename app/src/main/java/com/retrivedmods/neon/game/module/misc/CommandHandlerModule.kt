@@ -153,7 +153,8 @@ class CommandHandlerModule : Module("command_handler", ModuleCategory.Misc, true
 
     private fun toggleModule(name: String) {
         val module = ModuleManager.modules.find {
-            it.name.equals(name, true)
+            it.name.equals(name, true) ||
+                (it.name == "d4c_aura" && (name.equals("killaura", true) || name.equals("kiwi_killaura", true)))
         }
 
         if (module != null && !module.private) {
