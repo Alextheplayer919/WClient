@@ -30,8 +30,7 @@ Use an actual PNG (not a JPG renamed to PNG), preferably a square 1024 × 1024
 image. Transparent padding is recommended: Android masks adaptive icons into
 circles or other shapes, so keep the important artwork centered. This file is
 wired to both adaptive launcher icons and the in-app/overlay logo references.
-The current file is a placeholder copied from the existing branding; it does not
-become a custom Neon image until you replace it.
+The current file is the supplied rainbow NEON artwork, preserved as the original PNG.
 
 The adaptive background is configured separately in
 `app/src/main/res/drawable/ic_launcher_background.xml`. The normal/round icon
