@@ -30,6 +30,15 @@ toggling it; `.d4c_aura` is the new name.
 - **Geometric patterns**: Circle, Square, Zigzag, and Spiral move the aim point around the target's
   chest using the uploaded `GeoRot` formulas.
 
+## Head lock
+
+Every mode writes the packet's head yaw as the direct angle from the local player's eyes to the
+target's chest (the same `calcAngle` math the Kiwi aim uses), independent of the mode's body
+rotation. The body keeps the mode's style — Vortex circles, HvH strafes, Lynx smoothing, Kiwi
+jitter, predictive lead — while the head stays pointed at the target on every tick. In Predictive
+mode the head follows the rotator's locked target and falls back to the body yaw while releasing
+with no target. `None` still performs no rotation at all.
+
 ## Direct input-packet transport
 
 D4C Aura writes the calculated rotation directly into the current `PlayerAuthInputPacket` (and its
