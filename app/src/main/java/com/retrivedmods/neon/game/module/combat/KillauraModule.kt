@@ -345,7 +345,7 @@ class KillauraModule : Module("d4c_aura", ModuleCategory.Combat) {
         }
         // Head lock: the head always points straight at the target, whatever
         // style the body runs below.
-        val headYaw = headLookYaw(player, target)
+        val targetHeadYaw = headLookYaw(player, target)
         if (selected == RotationMode.ABYSM) {
             styleSelector.pick(target.runtimeEntityId, player.posX, player.posZ, packet.tick)
             val targetChestY = feetY(target) + if (target is Player) height(target) * 0.6f else 0.9f
@@ -354,7 +354,7 @@ class KillauraModule : Module("d4c_aura", ModuleCategory.Combat) {
                 target.motionX, target.motionY, target.motionZ,
                 player.posX, player.posY, player.posZ, styleSelector.lastStyle
             )
-            applyPacketRotation(packet, pitch, yaw, headYaw)
+            applyPacketRotation(packet, pitch, yaw, targetHeadYaw)
             return true
         }
 
@@ -372,7 +372,7 @@ class KillauraModule : Module("d4c_aura", ModuleCategory.Combat) {
                 target.posX + offsetX, chestY + offsetY, target.posZ + offsetZ,
                 0f, 0f, 0f, player.posX, player.posY, player.posZ, HvHGod.Style.UNKNOWN
             )
-            applyPacketRotation(packet, pitch, yaw, headYaw)
+            applyPacketRotation(packet, pitch, yaw, targetHeadYaw)
             return true
         }
 
@@ -422,7 +422,7 @@ class KillauraModule : Module("d4c_aura", ModuleCategory.Combat) {
         // Head lock: the engine handlers only output pitch/body yaw (and some
         // leave headYaw untouched), so point the head straight at the target
         // instead of copying the styled body yaw or a stale packet value.
-        ctx.headYaw = headYaw
+        ctx.headYaw = targetHeadYaw
         if (ctx.rotPitch.isFinite() && ctx.rotYaw.isFinite() && ctx.headYaw.isFinite()) {
             rotationContext = ctx
             applyPacketRotation(packet, ctx.rotPitch, ctx.rotYaw, ctx.headYaw)
